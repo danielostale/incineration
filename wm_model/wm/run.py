@@ -37,6 +37,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pandas as pd
+
 if __name__ == "__main__" and __package__ is None:
     project_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project_root))
@@ -57,47 +59,65 @@ else:
 # is launched from (terminal, `-m`, or the VS Code Run button).
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
+# All defined parametrizations, in display order. Every run computes all of
+# them so the dashboard can compare scenarios side by side, not just the
+# single "active" one.
+ALL_SCENARIOS = ["value_0", "value_1", "value_2", "value_3"]
+
+
+# Bloque 2b — _run_scenario helper
+def _run_scenario(scenario: str):
+    """Apply one parametrization and run the Stage-0 recursion for it.
+
+    Rewrites data/params_scalar.csv as a side effect (aplicar_escenario),
+    so callers that need a specific scenario "active" on disk afterwards
+    should call this last for that scenario.
+    """
+    aplicar_escenario(scenario=scenario)
+    cal = Calibration.load()
+    df = simulate(cal)
+
+    scenario_info = SCENARIO_DESCRIPTIONS.get(scenario, {})
+    df.insert(1, "scenario_id", scenario)
+    df.insert(2, "scenario_name", scenario_info.get("name", "Undocumented scenario"))
+    df.insert(3, "scenario_logic", scenario_info.get("logic", "No scenario logic documented."))
+    df.insert(4, "scenario_mechanisms", scenario_info.get(
+        "active_mechanisms", "No active mechanisms documented."))
+    return df
+
+
 # Bloque 3 — main function
 def main(
     scenario: str = "value_0",
     out_path: str | Path = PROJECT_DIR / "outputs_endogenous.csv",
     excel_path: str | Path = PROJECT_DIR / "MSW_Model_Documentation.xlsx",
+    all_scenarios_out_path: str | Path = PROJECT_DIR / "outputs_endogenous_all.csv",
 ):
     # 0. Convert Excel inputs → raw CSVs.
     # At this point params_scalar.csv may still contain value_0/value_1/etc.
     xlsx_to_csv()
 
-    # 1. Apply selected scenario.
-    # This rewrites params_scalar.csv into the active format:
-    # name | value | note
-    aplicar_escenario(scenario=scenario)
+    # 1-4. Apply the active scenario and run the Stage-0 recursion for it.
+    df = _run_scenario(scenario)
+    scenario_name = df["scenario_name"].iloc[0]
 
-    # 2. Load calibration from active CSVs.
-    cal = Calibration.load()
-
-    # 3. Run Stage-0 recursion.
-    df = simulate(cal)
-
-    # 4. Attach scenario metadata to every output row.
-    scenario_info = SCENARIO_DESCRIPTIONS.get(scenario, {})
-
-    scenario_name = scenario_info.get("name", "Undocumented scenario")
-    scenario_logic = scenario_info.get("logic", "No scenario logic documented.")
-    scenario_mechanisms = scenario_info.get(
-        "active_mechanisms",
-        "No active mechanisms documented.",
-    )
-
-    df.insert(1, "scenario_id", scenario)
-    df.insert(2, "scenario_name", scenario_name)
-    df.insert(3, "scenario_logic", scenario_logic)
-    df.insert(4, "scenario_mechanisms", scenario_mechanisms)
-
-    # 5. Standard CSV output.
+    # 5. Standard CSV output (single, active scenario).
     df.to_csv(out_path, index=False)
 
     # 6. Human-readable Excel documentation workbook.
     write_model_excel_report(df=df, out_path=excel_path)
+
+    # 6b. Run every other parametrization too and stack them into one
+    # combined CSV, so the dashboard can offer scenario comparison.
+    all_dfs = [
+        df if s == scenario else _run_scenario(s)
+        for s in ALL_SCENARIOS
+    ]
+    pd.concat(all_dfs, ignore_index=True).to_csv(all_scenarios_out_path, index=False)
+
+    # Restore the active scenario on disk (the loop above left
+    # params_scalar.csv pointed at whichever scenario ran last).
+    aplicar_escenario(scenario=scenario)
 
     # 7. Build dashboard by running dashboard.py as a separate script.
     # This is intentionally done through subprocess rather than importing
