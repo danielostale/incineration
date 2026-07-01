@@ -130,20 +130,90 @@ def simulate(cal: Calibration) -> pd.DataFrame:
 # Bloque 11 — record
         # --- record -------------------------------------------------------
         records.append(dict(
-            year=int(year), A=A, Psi=Psi,
-            sR=per_gen["H"].sR, sO=per_gen["H"].sO, sG=per_gen["H"].sG,
-            gen_total=gen_total, informal=informal_total, Q_HAUL=Q_HAUL,
-            Q_HAUL_R=QR, Q_HAUL_O=QO, Q_HAUL_G=QG,
-            Q_MRF=t_out.Q_MRF, Q_CMP=t_out.Q_CMP, Q_WTE=t_out.Q_WTE,
-            Q_LF=t_out.Q_LF, Q_mat=t_out.Q_mat, Q_cmp=t_out.Q_cmp,
-            Q_comb=t_out.Q_comb, Q_ash=t_out.Q_ash, E_WTE=t_out.E_WTE,
-            S_LF=S_LF, S_ENV=S_ENV,
-            gen_to_mun=gen_to_mun, mun_to_haul=mun_to_haul, tipping=tipping,
-            rev_mat=rev_mat, rev_E=rev_E, landfill_tax=landfill_tax,
-            net_MUN=net_MUN, net_HAUL=net_HAUL, net_T=net_T,
-            GHG_dir=ext.GHG_dir, GHG_net=ext.GHG_net, E_net=ext.E_net,
-            D_climate=ext.D_climate, D_air=ext.D_air, D_env=ext.D_env,
-            D_NC=D_NC, D_LF=D_LF, mass_residual=mass_res))
+            year=int(year),
+            A=A,
+            Psi=Psi,
+
+            # Source-separation shares, currently reported for households.
+            sR=per_gen["H"].sR,
+            sO=per_gen["H"].sO,
+            sG=per_gen["H"].sG,
+
+            # Generation and collection.
+            gen_total=gen_total,
+            informal=informal_total,
+            Q_HAUL=Q_HAUL,
+            Q_HAUL_R=QR,
+            Q_HAUL_O=QO,
+            Q_HAUL_G=QG,
+
+            # Installed treatment capacities.
+            K_MRF=row.K_MRF,
+            K_CMP=row.K_CMP,
+            K_WTE=row.K_WTE,
+
+            # Treatment-node throughput.
+            Q_MRF=t_out.Q_MRF,
+            Q_CMP=t_out.Q_CMP,
+            Q_WTE=t_out.Q_WTE,
+            Q_LF=t_out.Q_LF,
+
+            # Recovered outputs, residuals, combustion, ash, and energy.
+            Q_mat=t_out.Q_mat,
+            Q_cmp=t_out.Q_cmp,
+            Q_loss=t_out.Q_loss,
+            Q_comb=t_out.Q_comb,
+            Q_ash=t_out.Q_ash,
+            E_WTE=t_out.E_WTE,
+            rej_MRF=t_out.rej_MRF,
+            rej_CMP=t_out.rej_CMP,
+
+            # Treatment availability and capacity diagnostics.
+            R_avail=t_out.R_avail,
+            O_avail=t_out.O_avail,
+            Q_Gavail=t_out.Q_Gavail,
+
+            overflow_R=t_out.overflow_R,
+            overflow_O=t_out.overflow_O,
+
+            cap_gap_MRF=t_out.cap_gap_MRF,
+            cap_gap_CMP=t_out.cap_gap_CMP,
+
+            util_MRF=t_out.util_MRF,
+            util_CMP=t_out.util_CMP,
+
+            # Stocks.
+            S_LF=S_LF,
+            S_ENV=S_ENV,
+
+            # Monetary flows.
+            gen_to_mun=gen_to_mun,
+            mun_to_haul=mun_to_haul,
+            tipping=tipping,
+            rev_mat=rev_mat,
+            rev_cmp=rev_cmp,
+            rev_E=rev_E,
+            landfill_tax=landfill_tax,
+
+            # Agent balances.
+            net_MUN=net_MUN,
+            net_HAUL=net_HAUL,
+            net_T=net_T,
+
+            # Environmental outputs.
+            GHG_dir=ext.GHG_dir,
+            B_env=ext.B_env,
+            GHG_net=ext.GHG_net,
+            D_climate=ext.D_climate,
+            D_air=ext.D_air,
+            D_env=ext.D_env,
+            E_net=ext.E_net,
+
+            # Closure and diversion.
+            D_NC=D_NC,
+            D_LF=D_LF,
+            mass_residual=mass_res,
+        ))
 
 
 # Bloque 12 — state updates and return
