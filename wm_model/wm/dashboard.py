@@ -585,13 +585,16 @@ def _sankey_figs_for_scenario(df: pd.DataFrame) -> list:
         _add("Mechanical Separation", "Composting",    sep_rec_O,  "rgba(255,183,77,0.4)")
         _add("Mechanical Separation", "Residual Pool", q_aftersep, "rgba(122,127,150,0.3)")
 
-        # MRF / Composting outputs: recovered product, reject to landfill,
-        # capacity overflow rerouted to the residual pool.
+        # MRF / Composting outputs: recovered product; everything that isn't
+        # recovered (contamination reject + capacity overflow) is mixed,
+        # combustible residual — it rejoins the Residual Pool and competes
+        # for WTE capacity like the rest, rather than landfilling
+        # unconditionally ahead of it.
         _add("MRF",        "Recovered Material", q_mat,      "rgba(76,175,125,0.4)")
-        _add("MRF",        "Landfill",           rej_mrf,    "rgba(239,83,80,0.3)")
+        _add("MRF",        "Residual Pool",      rej_mrf,    "rgba(122,127,150,0.3)")
         _add("MRF",        "Residual Pool",      overflow_R, "rgba(122,127,150,0.3)")
         _add("Composting", "Compost Output",     q_cmp_out,  "rgba(255,183,77,0.4)")
-        _add("Composting", "Landfill",           rej_cmp,    "rgba(239,83,80,0.3)")
+        _add("Composting", "Residual Pool",      rej_cmp,    "rgba(122,127,150,0.3)")
         _add("Composting", "Residual Pool",      overflow_O, "rgba(122,127,150,0.3)")
 
         # Residual pool -> WTE (capacity-limited) or straight to landfill.
