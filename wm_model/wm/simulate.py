@@ -147,10 +147,31 @@ def simulate(cal: Calibration) -> pd.DataFrame:
             Q_HAUL_O=QO,
             Q_HAUL_G=QG,
 
+            # Generation and streams, broken down by generator type
+            # (Households, Small Commercial, Large Generators).
+            gen_H=per_gen["H"].generation,
+            QR_H=per_gen["H"].QR,
+            QO_H=per_gen["H"].QO,
+            QG_H=per_gen["H"].QG,
+            gen_SC=per_gen["SC"].generation,
+            QR_SC=per_gen["SC"].QR,
+            QO_SC=per_gen["SC"].QO,
+            QG_SC=per_gen["SC"].QG,
+            gen_LG=per_gen["LG"].generation,
+            QR_LG=per_gen["LG"].QR,
+            QO_LG=per_gen["LG"].QO,
+            QG_LG=per_gen["LG"].QG,
+
             # Installed treatment capacities.
             K_MRF=row.K_MRF,
             K_CMP=row.K_CMP,
             K_WTE=row.K_WTE,
+
+            # Separation / pre-treatment (how much of the General stream is
+            # mechanically separated vs. bypassing straight to residual).
+            Q_sep=t_out.Q_sep,
+            Q_bypass=t_out.Q_bypass,
+            Q_aftersep=t_out.Q_aftersep,
 
             # Treatment-node throughput.
             Q_MRF=t_out.Q_MRF,

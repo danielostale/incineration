@@ -514,24 +514,60 @@ def tab_environment(df: pd.DataFrame) -> str:
 
 # Bloque 11 — función tab_sankey
 def tab_sankey(df: pd.DataFrame) -> str:
-    """Returns a JSON list of one Sankey figure per year."""
+    """Returns a JSON list of one Sankey figure per year.
+
+    Layers: 3 generator types -> source streams (R/O/G) -> mechanical
+    separation of the General stream -> MRF/Composting/Residual pool ->
+    final destinations (Landfill, Recovered Material, Compost, Ash).
+    """
     figures = []
-    nodes = ["Generation", "Haulers", "MRF", "Composting", "WTE", "Landfill",
-             "Recovered Material", "Compost Output", "Ash"]
-    node_colors = [GREEN, TEAL, BLUE, AMBER, PURPLE, RED, GREEN, AMBER, GREY]
+    nodes = [
+        "Households", "Small Commercial", "Large Generators",
+        "Recyclables", "Organics", "General",
+        "Mechanical Separation",
+        "MRF", "Composting", "Residual Pool", "WTE",
+        "Landfill", "Recovered Material", "Compost Output", "Ash",
+    ]
+    node_colors = [
+        GREEN, TEAL, PURPLE,
+        BLUE, AMBER, GREY,
+        MUTED,
+        BLUE, AMBER, GREY, PURPLE,
+        RED, GREEN, AMBER, GREY,
+    ]
     idx = {n: i for i, n in enumerate(nodes)}
 
     for _, row in df.iterrows():
-        q_haul = row.get("Q_HAUL", 0)
+        qr_h,  qo_h,  qg_h  = row.get("QR_H", 0),  row.get("QO_H", 0),  row.get("QG_H", 0)
+        qr_sc, qo_sc, qg_sc = row.get("QR_SC", 0), row.get("QO_SC", 0), row.get("QG_SC", 0)
+        qr_lg, qo_lg, qg_lg = row.get("QR_LG", 0), row.get("QO_LG", 0), row.get("QG_LG", 0)
+
+        q_haul_r = row.get("Q_HAUL_R", 0)
+        q_haul_o = row.get("Q_HAUL_O", 0)
+
+        q_sep     = row.get("Q_sep", 0)
+        q_bypass  = row.get("Q_bypass", 0)
+        q_aftersep = row.get("Q_aftersep", 0)
+
+        # Recyclables/organics recovered from the General stream by
+        # mechanical separation (eta_R, eta_O), backed out from the
+        # capacity-available pools already computed by treatment.py.
+        sep_rec_R = max(0.0, row.get("R_avail", 0) - q_haul_r)
+        sep_rec_O = max(0.0, row.get("O_avail", 0) - q_haul_o)
+
         q_mrf  = row.get("Q_MRF", 0)
         q_cmp  = row.get("Q_CMP", 0)
         q_wte  = row.get("Q_WTE", 0)
-        q_lf   = row.get("Q_LF", 0)
         q_mat  = row.get("Q_mat", 0)
         q_cmp_out = row.get("Q_cmp", 0)
         q_ash  = row.get("Q_ash", 0)
-        rej_mrf = row.get("rej_MRF", q_mrf - q_mat if q_mrf > 0 else 0)
-        rej_cmp = row.get("rej_CMP", q_cmp - q_cmp_out if q_cmp > 0 else 0)
+        rej_mrf = row.get("rej_MRF", 0)
+        rej_cmp = row.get("rej_CMP", 0)
+        overflow_R = row.get("overflow_R", 0)
+        overflow_O = row.get("overflow_O", 0)
+
+        q_gavail = row.get("Q_Gavail", q_bypass + q_aftersep + overflow_R + overflow_O)
+        q_lf_dir = max(0.0, q_gavail - q_wte)
 
         sources, targets, values, link_colors = [], [], [], []
 
@@ -540,18 +576,45 @@ def tab_sankey(df: pd.DataFrame) -> str:
                 sources.append(idx[s]); targets.append(idx[t])
                 values.append(round(v, 1)); link_colors.append(color)
 
-        _add("Generation", "Haulers",          q_haul,   "rgba(38,198,218,0.4)")
-        _add("Haulers",    "MRF",               q_mrf,    "rgba(92,158,255,0.4)")
-        _add("Haulers",    "Composting",        q_cmp,    "rgba(255,183,77,0.4)")
-        _add("Haulers",    "WTE",               q_wte,    "rgba(171,71,188,0.4)")
-        _add("Haulers",    "Landfill",          max(0, q_lf - rej_mrf - rej_cmp - q_ash),
-                                                           "rgba(239,83,80,0.4)")
-        _add("MRF",        "Recovered Material", q_mat,   "rgba(76,175,125,0.4)")
-        _add("MRF",        "Landfill",          rej_mrf,  "rgba(239,83,80,0.3)")
-        _add("Composting", "Compost Output",    q_cmp_out,"rgba(255,183,77,0.4)")
-        _add("Composting", "Landfill",          rej_cmp,  "rgba(239,83,80,0.3)")
-        _add("WTE",        "Ash",               q_ash,    "rgba(96,125,139,0.4)")
-        _add("Ash",        "Landfill",          q_ash,    "rgba(239,83,80,0.3)")
+        # Generators -> source streams.
+        _add("Households",        "Recyclables", qr_h,  "rgba(76,175,125,0.4)")
+        _add("Households",        "Organics",    qo_h,  "rgba(76,175,125,0.4)")
+        _add("Households",        "General",     qg_h,  "rgba(76,175,125,0.4)")
+        _add("Small Commercial",  "Recyclables", qr_sc, "rgba(38,198,218,0.4)")
+        _add("Small Commercial",  "Organics",    qo_sc, "rgba(38,198,218,0.4)")
+        _add("Small Commercial",  "General",     qg_sc, "rgba(38,198,218,0.4)")
+        _add("Large Generators",  "Recyclables", qr_lg, "rgba(171,71,188,0.4)")
+        _add("Large Generators",  "Organics",    qo_lg, "rgba(171,71,188,0.4)")
+        _add("Large Generators",  "General",     qg_lg, "rgba(171,71,188,0.4)")
+
+        # Source streams -> treatment entry points.
+        _add("Recyclables", "MRF",                  q_haul_r, "rgba(92,158,255,0.4)")
+        _add("Organics",    "Composting",            q_haul_o, "rgba(255,183,77,0.4)")
+        _add("General",     "Mechanical Separation", q_sep,    "rgba(122,127,150,0.4)")
+        _add("General",     "Residual Pool",         q_bypass, "rgba(122,127,150,0.3)")
+
+        # Mechanical separation recovers R/O out of the General stream;
+        # the remainder stays residual.
+        _add("Mechanical Separation", "MRF",           sep_rec_R,  "rgba(92,158,255,0.4)")
+        _add("Mechanical Separation", "Composting",    sep_rec_O,  "rgba(255,183,77,0.4)")
+        _add("Mechanical Separation", "Residual Pool", q_aftersep, "rgba(122,127,150,0.3)")
+
+        # MRF / Composting outputs: recovered product, reject to landfill,
+        # capacity overflow rerouted to the residual pool.
+        _add("MRF",        "Recovered Material", q_mat,      "rgba(76,175,125,0.4)")
+        _add("MRF",        "Landfill",           rej_mrf,    "rgba(239,83,80,0.3)")
+        _add("MRF",        "Residual Pool",      overflow_R, "rgba(122,127,150,0.3)")
+        _add("Composting", "Compost Output",     q_cmp_out,  "rgba(255,183,77,0.4)")
+        _add("Composting", "Landfill",           rej_cmp,    "rgba(239,83,80,0.3)")
+        _add("Composting", "Residual Pool",      overflow_O, "rgba(122,127,150,0.3)")
+
+        # Residual pool -> WTE (capacity-limited) or straight to landfill.
+        _add("Residual Pool", "WTE",      q_wte,    "rgba(171,71,188,0.4)")
+        _add("Residual Pool", "Landfill", q_lf_dir, "rgba(239,83,80,0.4)")
+
+        # WTE ash is always landfilled.
+        _add("WTE", "Ash",      q_ash, "rgba(96,125,139,0.4)")
+        _add("Ash", "Landfill", q_ash, "rgba(239,83,80,0.3)")
 
         fig = go.Figure(go.Sankey(
             node=dict(
