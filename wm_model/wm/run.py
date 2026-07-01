@@ -53,11 +53,15 @@ else:
     from .xlsx_to_csv import xlsx_to_csv
     from .escenario import aplicar_escenario, SCENARIO_DESCRIPTIONS
 
+# Project root (wm_model/), regardless of the working directory the script
+# is launched from (terminal, `-m`, or the VS Code Run button).
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+
 # Bloque 3 — main function
 def main(
     scenario: str = "value_0",
-    out_path: str = "outputs_endogenous.csv",
-    excel_path: str = "MSW_Model_Documentation.xlsx",
+    out_path: str | Path = PROJECT_DIR / "outputs_endogenous.csv",
+    excel_path: str | Path = PROJECT_DIR / "MSW_Model_Documentation.xlsx",
 ):
     # 0. Convert Excel inputs → raw CSVs.
     # At this point params_scalar.csv may still contain value_0/value_1/etc.
@@ -108,7 +112,7 @@ def main(
     subprocess.run(
         [sys.executable, str(dashboard_script)],
         check=True,
-        cwd=Path.cwd(),
+        cwd=PROJECT_DIR,
     )
 
     # 8. Closure report.
