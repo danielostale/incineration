@@ -72,7 +72,8 @@ def simulate(cal: Calibration) -> pd.DataFrame:
         gen_to_mun   = 0.0
         per_gen      = {}
         for gen in generators:
-            o = gen.allocate(A, Psi, row.N, row.p_G, row.p_R, row.p_O)
+            driver = getattr(row, gen.driver_col)
+            o = gen.allocate(A, Psi, driver, row.p_G, row.p_R, row.p_O)
             QR += o.QR; QO += o.QO; QG += o.QG
             gen_total    += o.generation
             informal_total += o.informal          # accumulates 0.0
