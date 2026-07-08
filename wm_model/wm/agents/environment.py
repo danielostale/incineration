@@ -19,6 +19,21 @@ class Externalities:
     D_climate: float; D_air: float; D_env: float
     E_net: float
 
+    # Direct GHG emissions attributed to each source node (eq. 66 terms).
+    # Sum equals GHG_dir; kept separate for per-agent attribution (Sankey).
+    GHG_haul: float
+    GHG_sep: float
+    GHG_MRF: float
+    GHG_CMP: float
+    GHG_WTE: float
+    GHG_LF: float
+
+    # Avoided-emission credits attributed to each crediting node
+    # (eq. 69 terms). Sum equals B_env.
+    B_MRF: float
+    B_CMP: float
+    B_WTE: float
+
 
 class Environment:
     def __init__(self, p: dict, ap):
@@ -60,17 +75,25 @@ class Environment:
         """
         p, o = self.p, t_out
 
-        GHG_dir = (p["g_coll"] * Q_HAUL + p["g_sep"] * o.Q_sep            # eq. 66
-                   + p["g_MRF"] * o.Q_MRF + p["g_CMP"] * o.Q_CMP
-                   + p["g_WTE"] * o.Q_WTE + p["g_LF"] * o.Q_LF)
+        # Direct GHG emissions, one term per source node (eq. 66).
+        GHG_haul = p["g_coll"] * Q_HAUL
+        GHG_sep  = p["g_sep"] * o.Q_sep
+        GHG_MRF  = p["g_MRF"] * o.Q_MRF
+        GHG_CMP  = p["g_CMP"] * o.Q_CMP
+        GHG_WTE  = p["g_WTE"] * o.Q_WTE
+        GHG_LF   = p["g_LF"] * o.Q_LF
+        GHG_dir = GHG_haul + GHG_sep + GHG_MRF + GHG_CMP + GHG_WTE + GHG_LF
 
         E_net = (p["e_E"] * o.Q_WTE                                       # eq. 68
                  - p["e_use_MRF"] * o.Q_MRF - p["e_use_CMP"] * o.Q_CMP
                  - p["e_use_WTE"] * o.Q_WTE - p["e_use_LF"] * o.Q_LF
                  - p["e_use_sep"] * o.Q_sep)
 
-        B_env = (p["b_MRF"] * o.Q_mat + p["b_CMP"] * o.Q_cmp              # eq. 69
-                 + p["g_grid"] * o.E_WTE)
+        # Avoided-emission credits, one term per crediting node (eq. 69).
+        B_MRF = p["b_MRF"] * o.Q_mat
+        B_CMP = p["b_CMP"] * o.Q_cmp
+        B_WTE = p["g_grid"] * o.E_WTE
+        B_env = B_MRF + B_CMP + B_WTE
         GHG_net = GHG_dir - B_env                                        # eq. 70
 
         D_climate = p["SCC"] * GHG_net                                   # eq. 71
@@ -82,4 +105,8 @@ class Environment:
 
         return Externalities(GHG_dir=GHG_dir, B_env=B_env, GHG_net=GHG_net,
                              D_climate=D_climate, D_air=D_air, D_env=D_env,
-                             E_net=E_net)
+                             E_net=E_net,
+                             GHG_haul=GHG_haul, GHG_sep=GHG_sep,
+                             GHG_MRF=GHG_MRF, GHG_CMP=GHG_CMP,
+                             GHG_WTE=GHG_WTE, GHG_LF=GHG_LF,
+                             B_MRF=B_MRF, B_CMP=B_CMP, B_WTE=B_WTE)

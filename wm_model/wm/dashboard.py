@@ -504,6 +504,102 @@ def tab_sankey(df: pd.DataFrame) -> str:
     return json.dumps(all_figures)
 
 
+# Bloque 11b — función tab_ghg_sankey
+def tab_ghg_sankey(df: pd.DataFrame) -> str:
+    """Returns a JSON object {scenario_id: [fig_per_year, ...]} for the GHG
+    (tCO2e) Sankey — the same per-scenario/per-year structure as
+    tab_sankey(), but tracking greenhouse-gas emissions instead of mass.
+
+    A Sankey can only add flows, never subtract, so gross direct emissions
+    (GHG_dir) and avoided-emission credits (B_env) are drawn as two
+    separate arms from the same source/crediting nodes rather than netted
+    into one link. Net GHG (= GHG_dir - B_env) is reported as a text
+    annotation, not a flow.
+    """
+    all_figures: dict[str, list] = {}
+    for scenario_id, sdf in _scenario_groups(df):
+        all_figures[scenario_id] = _ghg_sankey_figs_for_scenario(sdf)
+    return json.dumps(all_figures)
+
+
+def _ghg_sankey_figs_for_scenario(df: pd.DataFrame) -> list:
+    """Build one GHG Sankey figure per year for a single-scenario dataframe."""
+    figures = []
+    nodes = [
+        "Haulers", "Mechanical Separation", "MRF", "Composting",
+        "WTE", "Landfill",
+        "Gross GHG Emissions", "Avoided Emissions (credits)",
+    ]
+    node_colors = [TEAL, MUTED, BLUE, AMBER, PURPLE, RED, AMBER, GREEN]
+    idx = {n: i for i, n in enumerate(nodes)}
+
+    for _, row in df.iterrows():
+        ghg_haul = row.get("GHG_haul", 0)
+        ghg_sep  = row.get("GHG_sep", 0)
+        ghg_mrf  = row.get("GHG_MRF", 0)
+        ghg_cmp  = row.get("GHG_CMP", 0)
+        ghg_wte  = row.get("GHG_WTE", 0)
+        ghg_lf   = row.get("GHG_LF", 0)
+        b_mrf = row.get("B_MRF", 0)
+        b_cmp = row.get("B_CMP", 0)
+        b_wte = row.get("B_WTE", 0)
+        ghg_dir = row.get("GHG_dir", ghg_haul + ghg_sep + ghg_mrf + ghg_cmp + ghg_wte + ghg_lf)
+        b_env = row.get("B_env", b_mrf + b_cmp + b_wte)
+        ghg_net = row.get("GHG_net", ghg_dir - b_env)
+
+        sources, targets, values, link_colors = [], [], [], []
+
+        def _add(s, t, v, color="rgba(100,100,120,0.3)"):
+            if v > 0:
+                sources.append(idx[s]); targets.append(idx[t])
+                values.append(round(v, 1)); link_colors.append(color)
+
+        # Gross direct emissions, one flow per source node.
+        _add("Haulers",                "Gross GHG Emissions", ghg_haul, "rgba(38,198,218,0.4)")
+        _add("Mechanical Separation",   "Gross GHG Emissions", ghg_sep,  "rgba(122,127,150,0.4)")
+        _add("MRF",                     "Gross GHG Emissions", ghg_mrf,  "rgba(92,158,255,0.4)")
+        _add("Composting",              "Gross GHG Emissions", ghg_cmp,  "rgba(255,183,77,0.4)")
+        _add("WTE",                     "Gross GHG Emissions", ghg_wte,  "rgba(171,71,188,0.4)")
+        _add("Landfill",                "Gross GHG Emissions", ghg_lf,   "rgba(239,83,80,0.4)")
+
+        # Avoided-emission credits — a separate arm from the nodes that
+        # generate them (recycled material, compost, WTE electricity),
+        # not netted against the gross flows above.
+        _add("MRF",        "Avoided Emissions (credits)", b_mrf, "rgba(76,175,125,0.4)")
+        _add("Composting", "Avoided Emissions (credits)", b_cmp, "rgba(76,175,125,0.4)")
+        _add("WTE",        "Avoided Emissions (credits)", b_wte, "rgba(76,175,125,0.4)")
+
+        fig = go.Figure(go.Sankey(
+            node=dict(
+                pad=18, thickness=22,
+                line=dict(color=BORDER, width=0.5),
+                label=nodes,
+                color=node_colors,
+                hovertemplate="<b>%{label}</b><br>%{value:,.0f} tCO2e<extra></extra>",
+            ),
+            link=dict(
+                source=sources, target=targets, value=values,
+                color=link_colors,
+                hovertemplate="<b>%{source.label} → %{target.label}</b><br>%{value:,.0f} tCO2e<extra></extra>",
+            ),
+        ))
+        fig.update_layout(
+            paper_bgcolor=CARD,
+            font=dict(family="Inter, system-ui, sans-serif", color=TEXT, size=12),
+            margin=dict(l=20, r=20, t=40, b=20),
+            height=480,
+            annotations=[dict(
+                text=(f"Gross: {ghg_dir:,.0f} tCO2e  −  Avoided: {b_env:,.0f} tCO2e"
+                      f"  =  <b>Net: {ghg_net:,.0f} tCO2e</b>"),
+                showarrow=False, x=0.5, y=1.08, xref="paper", yref="paper",
+                font=dict(size=13, color=TEXT),
+            )],
+        )
+        figures.append(json.loads(fig.to_json()))
+
+    return figures
+
+
 def _sankey_figs_for_scenario(df: pd.DataFrame) -> list:
     """Build one Sankey figure per year for a single-scenario dataframe."""
     figures = []
@@ -972,9 +1068,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <!-- Tab 4: Sankey -->
   <div id="tab-sankey" class="tab-panel">
-    <p class="section-title">Mass-flow Sankey — select scenario and year</p>
+    <p class="section-title">Flow diagram — select view, scenario and year</p>
     <div class="chart-card">
       <div class="sankey-controls">
+        <label>View</label>
+        <select class="scenario-select" id="sankey-view" onchange="updateSankey(document.getElementById('year-slider').value)">
+          <option value="mass">Mass flow (tons)</option>
+          <option value="ghg">GHG flow (tCO2e)</option>
+        </select>
         <label>Scenario</label>
         <select class="scenario-select" id="sankey-scenario" onchange="updateSankey(document.getElementById('year-slider').value)">
           {sankey_scenario_options}
@@ -997,6 +1098,7 @@ const figPhysical    = {fig_physical};
 const figMoney       = {fig_money};
 const figEnvironment = {fig_environment};
 const sankeyFigs     = {sankey_figs};
+const ghgSankeyFigs  = {ghg_sankey_figs};
 const years          = {years_list};
 const lastRow        = {last_row};
 const primaryScenario = {primary_scenario_json};
@@ -1083,7 +1185,9 @@ function updateSankey(idx) {{
   idx = parseInt(idx);
   document.getElementById('year-display').textContent = years[idx];
   const scenario = document.getElementById('sankey-scenario').value;
-  const fig = sankeyFigs[scenario][idx];
+  const view = document.getElementById('sankey-view').value;
+  const figs = view === 'ghg' ? ghgSankeyFigs : sankeyFigs;
+  const fig = figs[scenario][idx];
   Plotly.react('chart-sankey', fig.data, fig.layout, plotConfig);
 }}
 updateSankey(0);
@@ -1225,6 +1329,7 @@ def build_dashboard(
         fig_money=fig_money_json,
         fig_environment=fig_environment_json,
         sankey_figs=tab_sankey(combined_df),
+        ghg_sankey_figs=tab_ghg_sankey(combined_df),
         years_list=json.dumps(df["year"].tolist()),
         last_row=json.dumps(_safe_last_row(last)),
         primary_scenario_json=json.dumps(scenario_id),

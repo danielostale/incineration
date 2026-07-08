@@ -231,6 +231,18 @@ def simulate(cal: Calibration) -> pd.DataFrame:
             D_env=ext.D_env,
             E_net=ext.E_net,
 
+            # Direct GHG emissions and avoided-emission credits, broken
+            # down by source/crediting node (for per-agent attribution).
+            GHG_haul=ext.GHG_haul,
+            GHG_sep=ext.GHG_sep,
+            GHG_MRF=ext.GHG_MRF,
+            GHG_CMP=ext.GHG_CMP,
+            GHG_WTE=ext.GHG_WTE,
+            GHG_LF=ext.GHG_LF,
+            B_MRF=ext.B_MRF,
+            B_CMP=ext.B_CMP,
+            B_WTE=ext.B_WTE,
+
             # Closure and diversion.
             D_NC=D_NC,
             D_LF=D_LF,
