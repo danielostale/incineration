@@ -508,13 +508,16 @@ def tab_sankey(df: pd.DataFrame) -> str:
 def tab_ghg_sankey(df: pd.DataFrame) -> str:
     """Returns a JSON object {scenario_id: [fig_per_year, ...]} for the GHG
     (tCO2e) Sankey — the same per-scenario/per-year structure as
-    tab_sankey(), but tracking greenhouse-gas emissions instead of mass.
+    tab_sankey(), but tracking direct greenhouse-gas emissions by source
+    node instead of mass.
 
-    A Sankey can only add flows, never subtract, so gross direct emissions
-    (GHG_dir) and avoided-emission credits (B_env) are drawn as two
-    separate arms from the same source/crediting nodes rather than netted
-    into one link. Net GHG (= GHG_dir - B_env) is reported as a text
-    annotation, not a flow.
+    Shows only direct/gross emissions (Haulers, Mechanical Separation,
+    MRF, Composting, WTE, Landfill) — deliberately excludes avoided-
+    emission credits (recycling/compost/grid displacement), which rest on
+    modelling assumptions (b_MRF, b_CMP, g_grid) that are separate from
+    "how much CO2 does the system actually emit". Those credits are still
+    computed and recorded in the CSV (B_env, B_MRF, B_CMP, B_WTE) for
+    anyone who wants them; this view just doesn't mix them in.
     """
     all_figures: dict[str, list] = {}
     for scenario_id, sdf in _scenario_groups(df):
@@ -527,10 +530,9 @@ def _ghg_sankey_figs_for_scenario(df: pd.DataFrame) -> list:
     figures = []
     nodes = [
         "Haulers", "Mechanical Separation", "MRF", "Composting",
-        "WTE", "Landfill",
-        "Gross GHG Emissions", "Avoided Emissions (credits)",
+        "WTE", "Landfill", "Total GHG Emissions",
     ]
-    node_colors = [TEAL, MUTED, BLUE, AMBER, PURPLE, RED, AMBER, GREEN]
+    node_colors = [TEAL, MUTED, BLUE, AMBER, PURPLE, RED, AMBER]
     idx = {n: i for i, n in enumerate(nodes)}
 
     for _, row in df.iterrows():
@@ -540,12 +542,7 @@ def _ghg_sankey_figs_for_scenario(df: pd.DataFrame) -> list:
         ghg_cmp  = row.get("GHG_CMP", 0)
         ghg_wte  = row.get("GHG_WTE", 0)
         ghg_lf   = row.get("GHG_LF", 0)
-        b_mrf = row.get("B_MRF", 0)
-        b_cmp = row.get("B_CMP", 0)
-        b_wte = row.get("B_WTE", 0)
         ghg_dir = row.get("GHG_dir", ghg_haul + ghg_sep + ghg_mrf + ghg_cmp + ghg_wte + ghg_lf)
-        b_env = row.get("B_env", b_mrf + b_cmp + b_wte)
-        ghg_net = row.get("GHG_net", ghg_dir - b_env)
 
         sources, targets, values, link_colors = [], [], [], []
 
@@ -554,20 +551,15 @@ def _ghg_sankey_figs_for_scenario(df: pd.DataFrame) -> list:
                 sources.append(idx[s]); targets.append(idx[t])
                 values.append(round(v, 1)); link_colors.append(color)
 
-        # Gross direct emissions, one flow per source node.
-        _add("Haulers",                "Gross GHG Emissions", ghg_haul, "rgba(38,198,218,0.4)")
-        _add("Mechanical Separation",   "Gross GHG Emissions", ghg_sep,  "rgba(122,127,150,0.4)")
-        _add("MRF",                     "Gross GHG Emissions", ghg_mrf,  "rgba(92,158,255,0.4)")
-        _add("Composting",              "Gross GHG Emissions", ghg_cmp,  "rgba(255,183,77,0.4)")
-        _add("WTE",                     "Gross GHG Emissions", ghg_wte,  "rgba(171,71,188,0.4)")
-        _add("Landfill",                "Gross GHG Emissions", ghg_lf,   "rgba(239,83,80,0.4)")
-
-        # Avoided-emission credits — a separate arm from the nodes that
-        # generate them (recycled material, compost, WTE electricity),
-        # not netted against the gross flows above.
-        _add("MRF",        "Avoided Emissions (credits)", b_mrf, "rgba(76,175,125,0.4)")
-        _add("Composting", "Avoided Emissions (credits)", b_cmp, "rgba(76,175,125,0.4)")
-        _add("WTE",        "Avoided Emissions (credits)", b_wte, "rgba(76,175,125,0.4)")
+        # Direct emissions, one flow per source node — transport (Haulers),
+        # each treatment transformation (Separation, MRF, Composting, WTE),
+        # and Landfill.
+        _add("Haulers",              "Total GHG Emissions", ghg_haul, "rgba(38,198,218,0.4)")
+        _add("Mechanical Separation", "Total GHG Emissions", ghg_sep,  "rgba(122,127,150,0.4)")
+        _add("MRF",                   "Total GHG Emissions", ghg_mrf,  "rgba(92,158,255,0.4)")
+        _add("Composting",            "Total GHG Emissions", ghg_cmp,  "rgba(255,183,77,0.4)")
+        _add("WTE",                   "Total GHG Emissions", ghg_wte,  "rgba(171,71,188,0.4)")
+        _add("Landfill",              "Total GHG Emissions", ghg_lf,   "rgba(239,83,80,0.4)")
 
         fig = go.Figure(go.Sankey(
             node=dict(
@@ -589,8 +581,7 @@ def _ghg_sankey_figs_for_scenario(df: pd.DataFrame) -> list:
             margin=dict(l=20, r=20, t=40, b=20),
             height=480,
             annotations=[dict(
-                text=(f"Gross: {ghg_dir:,.0f} tCO2e  −  Avoided: {b_env:,.0f} tCO2e"
-                      f"  =  <b>Net: {ghg_net:,.0f} tCO2e</b>"),
+                text=f"Total direct emissions: <b>{ghg_dir:,.0f} tCO2e</b>",
                 showarrow=False, x=0.5, y=1.08, xref="paper", yref="paper",
                 font=dict(size=13, color=TEXT),
             )],
