@@ -75,10 +75,74 @@ NET_COLORS = {
     "net_T":    AMBER,
 }
 
+# Scenario comparison: canonical ordering and one dash style per scenario so
+# scenarios stay visually distinguishable even though a variable keeps the
+# same base color across scenarios.
+SCENARIO_ORDER = ["value_0", "value_1", "value_2", "value_3"]
+SCENARIO_DASH = ["solid", "dash", "dot", "dashdot"]
+SCENARIO_SWATCH = [TEAL, GREEN, AMBER, PURPLE]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# Bloque 4b — scenario grouping helpers
+def _scenario_groups(df: pd.DataFrame) -> list[tuple[str, pd.DataFrame]]:
+    """Split a (possibly multi-scenario) dataframe into [(scenario_id, sub_df), ...].
+
+    Falls back to a single implicit group when the CSV has no scenario_id
+    column (older single-scenario runs, or dashboard.py run standalone).
+    """
+    if "scenario_id" not in df.columns or df["scenario_id"].nunique() <= 1:
+        sid = df["scenario_id"].iloc[0] if "scenario_id" in df.columns and len(df) else "value_0"
+        return [(sid, df.reset_index(drop=True))]
+
+    groups = {sid: sub.reset_index(drop=True) for sid, sub in df.groupby("scenario_id", sort=False)}
+    ordered = [s for s in SCENARIO_ORDER if s in groups]
+    ordered += [s for s in groups if s not in ordered]
+    return [(s, groups[s]) for s in ordered]
+
+
+# Bloque 4c — helper _add_scenario_traces
+def _add_scenario_traces(fig, groups, primary, col, lbl, color, row, col_,
+                          hover_prefix="", hover_suffix="", y_scale=1.0,
+                          kind="scatter", fill=None, fillcolor=None) -> list[str]:
+    """Add one trace per scenario group for column `col`.
+
+    Returns the list of scenario_ids actually added (trace order), so the
+    caller can build the parallel `trace -> scenario` map the dashboard's JS
+    needs to toggle visibility per scenario.
+    """
+    added = []
+    multi = len(groups) > 1
+    for i, (sid, sub) in enumerate(groups):
+        if col not in sub.columns:
+            continue
+        name = f"{sid} — {lbl}" if multi else lbl
+        dash = SCENARIO_DASH[i % len(SCENARIO_DASH)]
+        y = sub[col] * y_scale
+        visible = True if sid == primary else False
+        hover = f"<b>{name}</b>: {hover_prefix}%{{y:,.0f}}{hover_suffix}<extra></extra>"
+        if kind == "bar":
+            fig.add_trace(go.Bar(
+                x=sub["year"], y=y, name=name,
+                marker_color=color, opacity=0.8,
+                visible=visible,
+                hovertemplate=hover,
+            ), row=row, col=col_)
+        else:
+            fig.add_trace(go.Scatter(
+                x=sub["year"], y=y, name=name,
+                mode="lines" if fill else "lines+markers",
+                line=dict(color=color, width=2, dash=dash),
+                marker=dict(size=5),
+                fill=fill, fillcolor=fillcolor,
+                visible=visible,
+                hovertemplate=hover,
+            ), row=row, col=col_)
+        added.append(sid)
+    return added
 
 # Bloque 5 — helper _line
 def _line(df: pd.DataFrame, cols: list[str], colors: dict,
@@ -136,7 +200,10 @@ def _fig_to_json(fig: go.Figure) -> str:
 # ---------------------------------------------------------------------------
 
 # Bloque 8 — función tab_physical
-def tab_physical(df: pd.DataFrame) -> str:
+def tab_physical(df: pd.DataFrame, primary: str) -> tuple[str, list[str]]:
+    groups = _scenario_groups(df)
+    trace_scenarios: list[str] = []
+
     fig = make_subplots(
         rows=2,
         cols=2,
@@ -154,28 +221,15 @@ def tab_physical(df: pd.DataFrame) -> str:
     # Panel 1 — generation, total collection and source-separated streams
     # ------------------------------------------------------------------
     panel1_series = [
-        ("gen_total", "Total generation", GREEN, "solid", 3),
-        ("Q_HAUL", "Total collected", TEAL, "solid", 3),
-        ("Q_HAUL_R", "Collected recyclables", BLUE, "dash", 2),
-        ("Q_HAUL_O", "Collected organics", AMBER, "dash", 2),
-        ("Q_HAUL_G", "Collected general/residual", GREY, "dash", 2),
+        ("gen_total", "Total generation", GREEN),
+        ("Q_HAUL", "Total collected", TEAL),
+        ("Q_HAUL_R", "Collected recyclables", BLUE),
+        ("Q_HAUL_O", "Collected organics", AMBER),
+        ("Q_HAUL_G", "Collected general/residual", GREY),
     ]
-
-    for col, lbl, color, dash, width in panel1_series:
-        if col in df.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=df["year"],
-                    y=df[col],
-                    name=lbl,
-                    mode="lines+markers",
-                    line=dict(color=color, width=width, dash=dash),
-                    marker=dict(size=5),
-                    hovertemplate=f"<b>{lbl}</b>: %{{y:,.0f}} t<extra></extra>",
-                ),
-                row=1,
-                col=1,
-            )
+    for col, lbl, color in panel1_series:
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, color, 1, 1, hover_suffix=" t")
 
     # ------------------------------------------------------------------
     # Panel 2 — treatment node throughput
@@ -186,62 +240,27 @@ def tab_physical(df: pd.DataFrame) -> str:
         ("Q_WTE", "WTE"),
         ("Q_LF", "Landfill"),
     ]:
-        if col in df.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=df["year"],
-                    y=df[col],
-                    name=lbl,
-                    mode="lines+markers",
-                    line=dict(color=FLOW_COLORS.get(col, MUTED), width=2),
-                    marker=dict(size=5),
-                    hovertemplate=f"<b>{lbl}</b>: %{{y:,.0f}} t<extra></extra>",
-                ),
-                row=1,
-                col=2,
-            )
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, FLOW_COLORS.get(col, MUTED), 1, 2,
+            hover_suffix=" t")
 
     # ------------------------------------------------------------------
     # Panel 3 — recovered outputs and capacity overflow
     # ------------------------------------------------------------------
     panel3_series = [
-        ("Q_mat", "Recovered recyclables", GREEN, "solid", 2),
-        ("Q_cmp", "Compost output", AMBER, "solid", 2),
-        ("overflow_R", "Recyclables overflow", BLUE, "dash", 2),
-        ("overflow_O", "Organics overflow", RED, "dash", 2),
+        ("Q_mat", "Recovered recyclables", GREEN),
+        ("Q_cmp", "Compost output", AMBER),
+        ("overflow_R", "Recyclables overflow", BLUE),
+        ("overflow_O", "Organics overflow", RED),
     ]
-
-    for col, lbl, color, dash, width in panel3_series:
-        if col in df.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=df["year"],
-                    y=df[col],
-                    name=lbl,
-                    mode="lines+markers",
-                    line=dict(color=color, width=width, dash=dash),
-                    marker=dict(size=5),
-                    hovertemplate=f"<b>{lbl}</b>: %{{y:,.0f}} t<extra></extra>",
-                ),
-                row=2,
-                col=1,
-            )
+    for col, lbl, color in panel3_series:
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, color, 2, 1, hover_suffix=" t")
 
     # Optional: WTE electricity, if useful, but keep it visually secondary.
-    if "E_WTE" in df.columns:
-        fig.add_trace(
-            go.Scatter(
-                x=df["year"],
-                y=df["E_WTE"],
-                name="Electricity from WTE",
-                mode="lines+markers",
-                line=dict(color=PURPLE, width=1, dash="dot"),
-                marker=dict(size=4),
-                hovertemplate="<b>Electricity from WTE</b>: %{y:,.1f} MWh<extra></extra>",
-            ),
-            row=2,
-            col=1,
-        )
+    trace_scenarios += _add_scenario_traces(
+        fig, groups, primary, "E_WTE", "Electricity from WTE", PURPLE, 2, 1,
+        hover_suffix=" MWh")
 
     # ------------------------------------------------------------------
     # Panel 4 — diversion rates
@@ -250,20 +269,9 @@ def tab_physical(df: pd.DataFrame) -> str:
         ("D_LF", "Landfill diversion", GREEN),
         ("D_NC", "Non-combustion diversion", TEAL),
     ]:
-        if col in df.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=df["year"],
-                    y=df[col] * 100,
-                    name=lbl,
-                    mode="lines+markers",
-                    line=dict(color=color, width=2),
-                    marker=dict(size=5),
-                    hovertemplate=f"<b>{lbl}</b>: %{{y:.1f}}%<extra></extra>",
-                ),
-                row=2,
-                col=2,
-            )
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, color, 2, 2,
+            hover_suffix="%", y_scale=100.0)
 
     # ------------------------------------------------------------------
     # Layout
@@ -333,7 +341,7 @@ def tab_physical(df: pd.DataFrame) -> str:
         col=2,
     )
 
-    return _fig_to_json(fig)
+    return _fig_to_json(fig), trace_scenarios
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +349,10 @@ def tab_physical(df: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 
 # Bloque 9 — función tab_money
-def tab_money(df: pd.DataFrame) -> str:
+def tab_money(df: pd.DataFrame, primary: str) -> tuple[str, list[str]]:
+    groups = _scenario_groups(df)
+    trace_scenarios: list[str] = []
+
     fig = make_subplots(
         rows=2, cols=2,
         subplot_titles=[
@@ -358,27 +369,17 @@ def tab_money(df: pd.DataFrame) -> str:
     for col, lbl in [("gen_to_mun", "GEN → MUN"),
                      ("mun_to_haul", "MUN → HAUL"),
                      ("tipping", "HAUL → T (tipping)")]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["year"], y=df[col], name=lbl,
-                mode="lines+markers",
-                line=dict(color=MONEY_COLORS.get(col, MUTED), width=2),
-                marker=dict(size=5),
-                hovertemplate=f"<b>{lbl}</b>: $%{{y:,.0f}}<extra></extra>",
-            ), row=1, col=1)
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, MONEY_COLORS.get(col, MUTED), 1, 1,
+            hover_prefix="$")
 
     # Panel 2 — net balances
     for col, lbl in [("net_MUN", "MUN net"),
                      ("net_HAUL", "HAUL net"),
                      ("net_T", "Treatment net")]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["year"], y=df[col], name=lbl,
-                mode="lines+markers",
-                line=dict(color=NET_COLORS.get(col, MUTED), width=2),
-                marker=dict(size=5),
-                hovertemplate=f"<b>{lbl}</b>: $%{{y:,.0f}}<extra></extra>",
-            ), row=1, col=2)
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, NET_COLORS.get(col, MUTED), 1, 2,
+            hover_prefix="$")
     # Zero reference line
     fig.add_hline(y=0, line=dict(color=BORDER, width=1, dash="dot"), row=1, col=2)
 
@@ -386,22 +387,14 @@ def tab_money(df: pd.DataFrame) -> str:
     for col, lbl in [("rev_mat", "Material sales"),
                      ("rev_E", "Electricity sales"),
                      ("tipping", "Tipping revenue")]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["year"], y=df[col], name=lbl,
-                mode="lines+markers",
-                line=dict(color=MONEY_COLORS.get(col, MUTED), width=2),
-                marker=dict(size=5),
-                hovertemplate=f"<b>{lbl}</b>: $%{{y:,.0f}}<extra></extra>",
-            ), row=2, col=1)
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, MONEY_COLORS.get(col, MUTED), 2, 1,
+            hover_prefix="$")
 
     # Panel 4 — landfill tax
-    if "landfill_tax" in df.columns:
-        fig.add_trace(go.Bar(
-            x=df["year"], y=df["landfill_tax"], name="Landfill tax",
-            marker_color=RED, opacity=0.8,
-            hovertemplate="<b>LF tax</b>: $%{y:,.0f}<extra></extra>",
-        ), row=2, col=2)
+    trace_scenarios += _add_scenario_traces(
+        fig, groups, primary, "landfill_tax", "Landfill tax", RED, 2, 2,
+        kind="bar", hover_prefix="$")
 
     fig.update_layout(
         paper_bgcolor=CARD, plot_bgcolor=BG,
@@ -420,7 +413,7 @@ def tab_money(df: pd.DataFrame) -> str:
                  "yaxis", "yaxis2", "yaxis3", "yaxis4"]:
         fig.update_layout(**{axis: dict(gridcolor=BORDER, zerolinecolor=BORDER,
                                         tickfont=dict(color=MUTED))})
-    return _fig_to_json(fig)
+    return _fig_to_json(fig), trace_scenarios
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +421,10 @@ def tab_money(df: pd.DataFrame) -> str:
 # ---------------------------------------------------------------------------
 
 # Bloque 10 — función tab_environment
-def tab_environment(df: pd.DataFrame) -> str:
+def tab_environment(df: pd.DataFrame, primary: str) -> tuple[str, list[str]]:
+    groups = _scenario_groups(df)
+    trace_scenarios: list[str] = []
+
     fig = make_subplots(
         rows=2, cols=2,
         subplot_titles=[
@@ -444,50 +440,28 @@ def tab_environment(df: pd.DataFrame) -> str:
     # Panel 1 — GHG
     for col, lbl, color in [("GHG_dir", "Direct GHG", RED),
                               ("GHG_net", "Net GHG (after avoided)", AMBER)]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["year"], y=df[col], name=lbl,
-                mode="lines+markers",
-                line=dict(color=color, width=2),
-                marker=dict(size=5),
-                hovertemplate=f"<b>{lbl}</b>: %{{y:,.0f}} tCO₂e<extra></extra>",
-            ), row=1, col=1)
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, color, 1, 1, hover_suffix=" tCO₂e")
 
     # Panel 2 — damages
     for col, lbl, color in [("D_climate", "Climate damage", AMBER),
                               ("D_air", "Air quality damage", RED),
                               ("D_env", "Total env. damage", PURPLE)]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["year"], y=df[col], name=lbl,
-                mode="lines+markers",
-                line=dict(color=color, width=2),
-                marker=dict(size=5),
-                hovertemplate=f"<b>{lbl}</b>: $%{{y:,.0f}}<extra></extra>",
-            ), row=1, col=2)
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, color, 1, 2, hover_prefix="$")
 
     # Panel 3 — landfill stock
-    if "S_LF" in df.columns:
-        fig.add_trace(go.Scatter(
-            x=df["year"], y=df["S_LF"], name="S_LF (cumulative)",
-            mode="lines", fill="tozeroy",
-            line=dict(color=RED, width=2),
-            fillcolor="rgba(239,83,80,0.15)",
-            hovertemplate="<b>Landfill stock</b>: %{y:,.0f} t<extra></extra>",
-        ), row=2, col=1)
+    trace_scenarios += _add_scenario_traces(
+        fig, groups, primary, "S_LF", "S_LF (cumulative)", RED, 2, 1,
+        hover_suffix=" t", fill="tozeroy", fillcolor="rgba(239,83,80,0.15)")
 
     # Panel 4 — sorting shares
     for col, lbl, color in [("sR", "Recyclables (sR)", BLUE),
                               ("sO", "Organics (sO)", GREEN),
                               ("sG", "General (sG)", GREY)]:
-        if col in df.columns:
-            fig.add_trace(go.Scatter(
-                x=df["year"], y=df[col] * 100, name=lbl,
-                mode="lines+markers",
-                line=dict(color=color, width=2),
-                marker=dict(size=5),
-                hovertemplate=f"<b>{lbl}</b>: %{{y:.1f}}%<extra></extra>",
-            ), row=2, col=2)
+        trace_scenarios += _add_scenario_traces(
+            fig, groups, primary, col, lbl, color, 2, 2,
+            hover_suffix="%", y_scale=100.0)
 
     fig.update_layout(
         paper_bgcolor=CARD, plot_bgcolor=BG,
@@ -505,7 +479,7 @@ def tab_environment(df: pd.DataFrame) -> str:
                  "yaxis", "yaxis2", "yaxis3", "yaxis4"]:
         fig.update_layout(**{axis: dict(gridcolor=BORDER, zerolinecolor=BORDER,
                                         tickfont=dict(color=MUTED))})
-    return _fig_to_json(fig)
+    return _fig_to_json(fig), trace_scenarios
 
 
 # ---------------------------------------------------------------------------
@@ -514,24 +488,61 @@ def tab_environment(df: pd.DataFrame) -> str:
 
 # Bloque 11 — función tab_sankey
 def tab_sankey(df: pd.DataFrame) -> str:
-    """Returns a JSON list of one Sankey figure per year."""
+    """Returns a JSON object {scenario_id: [fig_per_year, ...]}.
+
+    Layers: 3 generator types -> source streams (R/O/G) -> mechanical
+    separation of the General stream -> MRF/Composting/Residual pool ->
+    final destinations (Landfill, Recovered Material, Compost, Ash).
+
+    Sankeys can't overlay scenarios (it's a flow diagram, not a line chart),
+    so each scenario gets its own year-indexed list of figures; the
+    dashboard's scenario dropdown picks which one to display.
+    """
+    all_figures: dict[str, list] = {}
+    for scenario_id, sdf in _scenario_groups(df):
+        all_figures[scenario_id] = _sankey_figs_for_scenario(sdf)
+    return json.dumps(all_figures)
+
+
+# Bloque 11b — función tab_ghg_sankey
+def tab_ghg_sankey(df: pd.DataFrame) -> str:
+    """Returns a JSON object {scenario_id: [fig_per_year, ...]} for the GHG
+    (tCO2e) Sankey — the same per-scenario/per-year structure as
+    tab_sankey(), but tracking direct greenhouse-gas emissions by source
+    node instead of mass.
+
+    Shows only direct/gross emissions (Haulers, Mechanical Separation,
+    MRF, Composting, WTE, Landfill) — deliberately excludes avoided-
+    emission credits (recycling/compost/grid displacement), which rest on
+    modelling assumptions (b_MRF, b_CMP, g_grid) that are separate from
+    "how much CO2 does the system actually emit". Those credits are still
+    computed and recorded in the CSV (B_env, B_MRF, B_CMP, B_WTE) for
+    anyone who wants them; this view just doesn't mix them in.
+    """
+    all_figures: dict[str, list] = {}
+    for scenario_id, sdf in _scenario_groups(df):
+        all_figures[scenario_id] = _ghg_sankey_figs_for_scenario(sdf)
+    return json.dumps(all_figures)
+
+
+def _ghg_sankey_figs_for_scenario(df: pd.DataFrame) -> list:
+    """Build one GHG Sankey figure per year for a single-scenario dataframe."""
     figures = []
-    nodes = ["Generation", "Haulers", "MRF", "Composting", "WTE", "Landfill",
-             "Recovered Material", "Compost Output", "Ash"]
-    node_colors = [GREEN, TEAL, BLUE, AMBER, PURPLE, RED, GREEN, AMBER, GREY]
+    nodes = [
+        "Haulers", "Mechanical Separation", "MRF", "Composting",
+        "WTE", "Landfill", "Total GHG Emissions",
+    ]
+    node_colors = [TEAL, MUTED, BLUE, AMBER, PURPLE, RED, AMBER]
     idx = {n: i for i, n in enumerate(nodes)}
 
     for _, row in df.iterrows():
-        q_haul = row.get("Q_HAUL", 0)
-        q_mrf  = row.get("Q_MRF", 0)
-        q_cmp  = row.get("Q_CMP", 0)
-        q_wte  = row.get("Q_WTE", 0)
-        q_lf   = row.get("Q_LF", 0)
-        q_mat  = row.get("Q_mat", 0)
-        q_cmp_out = row.get("Q_cmp", 0)
-        q_ash  = row.get("Q_ash", 0)
-        rej_mrf = row.get("rej_MRF", q_mrf - q_mat if q_mrf > 0 else 0)
-        rej_cmp = row.get("rej_CMP", q_cmp - q_cmp_out if q_cmp > 0 else 0)
+        ghg_haul = row.get("GHG_haul", 0)
+        ghg_sep  = row.get("GHG_sep", 0)
+        ghg_mrf  = row.get("GHG_MRF", 0)
+        ghg_cmp  = row.get("GHG_CMP", 0)
+        ghg_wte  = row.get("GHG_WTE", 0)
+        ghg_lf   = row.get("GHG_LF", 0)
+        ghg_dir = row.get("GHG_dir", ghg_haul + ghg_sep + ghg_mrf + ghg_cmp + ghg_wte + ghg_lf)
 
         sources, targets, values, link_colors = [], [], [], []
 
@@ -540,18 +551,146 @@ def tab_sankey(df: pd.DataFrame) -> str:
                 sources.append(idx[s]); targets.append(idx[t])
                 values.append(round(v, 1)); link_colors.append(color)
 
-        _add("Generation", "Haulers",          q_haul,   "rgba(38,198,218,0.4)")
-        _add("Haulers",    "MRF",               q_mrf,    "rgba(92,158,255,0.4)")
-        _add("Haulers",    "Composting",        q_cmp,    "rgba(255,183,77,0.4)")
-        _add("Haulers",    "WTE",               q_wte,    "rgba(171,71,188,0.4)")
-        _add("Haulers",    "Landfill",          max(0, q_lf - rej_mrf - rej_cmp - q_ash),
-                                                           "rgba(239,83,80,0.4)")
-        _add("MRF",        "Recovered Material", q_mat,   "rgba(76,175,125,0.4)")
-        _add("MRF",        "Landfill",          rej_mrf,  "rgba(239,83,80,0.3)")
-        _add("Composting", "Compost Output",    q_cmp_out,"rgba(255,183,77,0.4)")
-        _add("Composting", "Landfill",          rej_cmp,  "rgba(239,83,80,0.3)")
-        _add("WTE",        "Ash",               q_ash,    "rgba(96,125,139,0.4)")
-        _add("Ash",        "Landfill",          q_ash,    "rgba(239,83,80,0.3)")
+        # Direct emissions, one flow per source node — transport (Haulers),
+        # each treatment transformation (Separation, MRF, Composting, WTE),
+        # and Landfill.
+        _add("Haulers",              "Total GHG Emissions", ghg_haul, "rgba(38,198,218,0.4)")
+        _add("Mechanical Separation", "Total GHG Emissions", ghg_sep,  "rgba(122,127,150,0.4)")
+        _add("MRF",                   "Total GHG Emissions", ghg_mrf,  "rgba(92,158,255,0.4)")
+        _add("Composting",            "Total GHG Emissions", ghg_cmp,  "rgba(255,183,77,0.4)")
+        _add("WTE",                   "Total GHG Emissions", ghg_wte,  "rgba(171,71,188,0.4)")
+        _add("Landfill",              "Total GHG Emissions", ghg_lf,   "rgba(239,83,80,0.4)")
+
+        fig = go.Figure(go.Sankey(
+            node=dict(
+                pad=18, thickness=22,
+                line=dict(color=BORDER, width=0.5),
+                label=nodes,
+                color=node_colors,
+                hovertemplate="<b>%{label}</b><br>%{value:,.0f} tCO2e<extra></extra>",
+            ),
+            link=dict(
+                source=sources, target=targets, value=values,
+                color=link_colors,
+                hovertemplate="<b>%{source.label} → %{target.label}</b><br>%{value:,.0f} tCO2e<extra></extra>",
+            ),
+        ))
+        fig.update_layout(
+            paper_bgcolor=CARD,
+            font=dict(family="Inter, system-ui, sans-serif", color=TEXT, size=12),
+            margin=dict(l=20, r=20, t=40, b=20),
+            height=480,
+            annotations=[dict(
+                text=f"Total direct emissions: <b>{ghg_dir:,.0f} tCO2e</b>",
+                showarrow=False, x=0.5, y=1.08, xref="paper", yref="paper",
+                font=dict(size=13, color=TEXT),
+            )],
+        )
+        figures.append(json.loads(fig.to_json()))
+
+    return figures
+
+
+def _sankey_figs_for_scenario(df: pd.DataFrame) -> list:
+    """Build one Sankey figure per year for a single-scenario dataframe."""
+    figures = []
+    nodes = [
+        "Households", "Small Commercial", "Large Generators",
+        "Recyclables", "Organics", "General",
+        "Mechanical Separation",
+        "MRF", "Composting", "Residual Pool", "WTE",
+        "Landfill", "Recovered Material", "Compost Output", "Ash",
+    ]
+    node_colors = [
+        GREEN, TEAL, PURPLE,
+        BLUE, AMBER, GREY,
+        MUTED,
+        BLUE, AMBER, GREY, PURPLE,
+        RED, GREEN, AMBER, GREY,
+    ]
+    idx = {n: i for i, n in enumerate(nodes)}
+
+    for _, row in df.iterrows():
+        qr_h,  qo_h,  qg_h  = row.get("QR_H", 0),  row.get("QO_H", 0),  row.get("QG_H", 0)
+        qr_sc, qo_sc, qg_sc = row.get("QR_SC", 0), row.get("QO_SC", 0), row.get("QG_SC", 0)
+        qr_lg, qo_lg, qg_lg = row.get("QR_LG", 0), row.get("QO_LG", 0), row.get("QG_LG", 0)
+
+        q_haul_r = row.get("Q_HAUL_R", 0)
+        q_haul_o = row.get("Q_HAUL_O", 0)
+
+        q_sep     = row.get("Q_sep", 0)
+        q_bypass  = row.get("Q_bypass", 0)
+        q_aftersep = row.get("Q_aftersep", 0)
+
+        # Recyclables/organics recovered from the General stream by
+        # mechanical separation (eta_R, eta_O), backed out from the
+        # capacity-available pools already computed by treatment.py.
+        sep_rec_R = max(0.0, row.get("R_avail", 0) - q_haul_r)
+        sep_rec_O = max(0.0, row.get("O_avail", 0) - q_haul_o)
+
+        q_mrf  = row.get("Q_MRF", 0)
+        q_cmp  = row.get("Q_CMP", 0)
+        q_wte  = row.get("Q_WTE", 0)
+        q_mat  = row.get("Q_mat", 0)
+        q_cmp_out = row.get("Q_cmp", 0)
+        q_ash  = row.get("Q_ash", 0)
+        rej_mrf = row.get("rej_MRF", 0)
+        rej_cmp = row.get("rej_CMP", 0)
+        overflow_R = row.get("overflow_R", 0)
+        overflow_O = row.get("overflow_O", 0)
+
+        q_gavail = row.get("Q_Gavail", q_bypass + q_aftersep + overflow_R + overflow_O)
+        q_lf_dir = max(0.0, q_gavail - q_wte)
+
+        sources, targets, values, link_colors = [], [], [], []
+
+        def _add(s, t, v, color="rgba(100,100,120,0.3)"):
+            if v > 0:
+                sources.append(idx[s]); targets.append(idx[t])
+                values.append(round(v, 1)); link_colors.append(color)
+
+        # Generators -> source streams.
+        _add("Households",        "Recyclables", qr_h,  "rgba(76,175,125,0.4)")
+        _add("Households",        "Organics",    qo_h,  "rgba(76,175,125,0.4)")
+        _add("Households",        "General",     qg_h,  "rgba(76,175,125,0.4)")
+        _add("Small Commercial",  "Recyclables", qr_sc, "rgba(38,198,218,0.4)")
+        _add("Small Commercial",  "Organics",    qo_sc, "rgba(38,198,218,0.4)")
+        _add("Small Commercial",  "General",     qg_sc, "rgba(38,198,218,0.4)")
+        _add("Large Generators",  "Recyclables", qr_lg, "rgba(171,71,188,0.4)")
+        _add("Large Generators",  "Organics",    qo_lg, "rgba(171,71,188,0.4)")
+        _add("Large Generators",  "General",     qg_lg, "rgba(171,71,188,0.4)")
+
+        # Source streams -> treatment entry points.
+        _add("Recyclables", "MRF",                  q_haul_r, "rgba(92,158,255,0.4)")
+        _add("Organics",    "Composting",            q_haul_o, "rgba(255,183,77,0.4)")
+        _add("General",     "Mechanical Separation", q_sep,    "rgba(122,127,150,0.4)")
+        _add("General",     "Residual Pool",         q_bypass, "rgba(122,127,150,0.3)")
+
+        # Mechanical separation recovers R/O out of the General stream;
+        # the remainder stays residual.
+        _add("Mechanical Separation", "MRF",           sep_rec_R,  "rgba(92,158,255,0.4)")
+        _add("Mechanical Separation", "Composting",    sep_rec_O,  "rgba(255,183,77,0.4)")
+        _add("Mechanical Separation", "Residual Pool", q_aftersep, "rgba(122,127,150,0.3)")
+
+        # MRF / Composting outputs: recovered product; everything that isn't
+        # recovered (contamination reject + capacity overflow) is mixed,
+        # combustible residual — it rejoins the Residual Pool and competes
+        # for WTE capacity like the rest, rather than landfilling
+        # unconditionally ahead of it.
+        _add("MRF",        "Recovered Material", q_mat,      "rgba(76,175,125,0.4)")
+        _add("MRF",        "Residual Pool",      rej_mrf,    "rgba(122,127,150,0.3)")
+        _add("MRF",        "Residual Pool",      overflow_R, "rgba(122,127,150,0.3)")
+        _add("Composting", "Compost Output",     q_cmp_out,  "rgba(255,183,77,0.4)")
+        _add("Composting", "Residual Pool",      rej_cmp,    "rgba(122,127,150,0.3)")
+        _add("Composting", "Residual Pool",      overflow_O, "rgba(122,127,150,0.3)")
+
+        # Residual pool -> WTE (capacity-limited) or straight to landfill.
+        _add("Residual Pool", "WTE",      q_wte,    "rgba(171,71,188,0.4)")
+        _add("Residual Pool", "Landfill", q_lf_dir, "rgba(239,83,80,0.4)")
+
+        # WTE ash is always landfilled.
+        _add("WTE", "Ash",      q_ash, "rgba(96,125,139,0.4)")
+        _add("Ash", "Landfill", q_ash, "rgba(239,83,80,0.3)")
 
         fig = go.Figure(go.Sankey(
             node=dict(
@@ -575,7 +714,7 @@ def tab_sankey(df: pd.DataFrame) -> str:
         )
         figures.append(json.loads(fig.to_json()))
 
-    return json.dumps(figures)
+    return figures
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +906,38 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     min-width: 50px;
   }}
 
+  /* ── Scenario picker (top-right, header) ── */
+  .scenario-chip {{
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }}
+  .scenario-chip input {{
+    accent-color: var(--teal);
+    cursor: pointer;
+  }}
+  .scenario-chip .swatch {{
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+  }}
+  .scenario-chip.active {{ color: var(--text); }}
+
+  .scenario-select {{
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 12px;
+  }}
+
   /* ── Flow table ── */
   .flow-table {{
     width: 100%;
@@ -805,7 +976,12 @@ HTML_TEMPLATE = """<!DOCTYPE html>
       <span style="color:#26c6da;font-weight:600">Dashboard built: {dashboard_built_at}</span>
     </div>
   </div>
-  <span class="badge">Stage 0</span>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <div id="scenario-picker" style="display:flex;align-items:center;gap:10px;">
+      {scenario_checkboxes}
+    </div>
+    <span class="badge">Stage 0</span>
+  </div>
 </header>
 
 <!-- KPI strip -->
@@ -883,9 +1059,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
   <!-- Tab 4: Sankey -->
   <div id="tab-sankey" class="tab-panel">
-    <p class="section-title">Mass-flow Sankey — select year</p>
+    <p class="section-title">Flow diagram — select view, scenario and year</p>
     <div class="chart-card">
       <div class="sankey-controls">
+        <label>View</label>
+        <select class="scenario-select" id="sankey-view" onchange="updateSankey(document.getElementById('year-slider').value)">
+          <option value="mass">Mass flow (tons)</option>
+          <option value="ghg">GHG flow (tCO2e)</option>
+        </select>
+        <label>Scenario</label>
+        <select class="scenario-select" id="sankey-scenario" onchange="updateSankey(document.getElementById('year-slider').value)">
+          {sankey_scenario_options}
+        </select>
         <label>Year</label>
         <input type="range" class="year-slider" id="year-slider"
                min="0" max="{n_years_minus1}" value="0"
@@ -904,8 +1089,15 @@ const figPhysical    = {fig_physical};
 const figMoney       = {fig_money};
 const figEnvironment = {fig_environment};
 const sankeyFigs     = {sankey_figs};
+const ghgSankeyFigs  = {ghg_sankey_figs};
 const years          = {years_list};
 const lastRow        = {last_row};
+const primaryScenario = {primary_scenario_json};
+const traceScenarios = {{
+  physical:    {trace_scenarios_physical},
+  money:       {trace_scenarios_money},
+  environment: {trace_scenarios_environment},
+}};
 
 // ── Tab switching ──────────────────────────────────────────────────────────
 function showTab(name, btn) {{
@@ -914,6 +1106,35 @@ function showTab(name, btn) {{
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
   if (name === 'sankey') updateSankey(document.getElementById('year-slider').value);
+}}
+
+// ── Scenario comparison (checkboxes toggle traces across all line charts) ──
+function checkedScenarios() {{
+  return Array.from(document.querySelectorAll('.scenario-chip input:checked'))
+    .map(el => el.dataset.scenario);
+}}
+
+function applyScenarioFilter() {{
+  const checked = new Set(checkedScenarios());
+  if (checked.size === 0) {{
+    checked.add(primaryScenario);
+    const cb = document.querySelector(`.scenario-chip input[data-scenario="${{primaryScenario}}"]`);
+    if (cb) cb.checked = true;
+  }}
+  document.querySelectorAll('.scenario-chip').forEach(chip => {{
+    const input = chip.querySelector('input');
+    chip.classList.toggle('active', input.checked);
+  }});
+  for (const [chartId, key] of [
+    ['chart-physical', 'physical'],
+    ['chart-money', 'money'],
+    ['chart-environment', 'environment'],
+  ]) {{
+    const scenarios = traceScenarios[key];
+    const visible = scenarios.map(s => checked.has(s));
+    const idxs = scenarios.map((_, i) => i);
+    Plotly.restyle(chartId, {{visible: visible}}, idxs);
+  }}
 }}
 
 // ── Render static charts ───────────────────────────────────────────────────
@@ -954,7 +1175,10 @@ tbl.innerHTML = `<tr>
 function updateSankey(idx) {{
   idx = parseInt(idx);
   document.getElementById('year-display').textContent = years[idx];
-  const fig = sankeyFigs[idx];
+  const scenario = document.getElementById('sankey-scenario').value;
+  const view = document.getElementById('sankey-view').value;
+  const figs = view === 'ghg' ? ghgSankeyFigs : sankeyFigs;
+  const fig = figs[scenario][idx];
   Plotly.react('chart-sankey', fig.data, fig.layout, plotConfig);
 }}
 updateSankey(0);
@@ -972,6 +1196,7 @@ updateSankey(0);
 def build_dashboard(
     csv_path: str | Path = "outputs_endogenous.csv",
     out_path: str | Path = "MSW_Dashboard.html",
+    all_scenarios_csv_path: str | Path | None = None,
 ) -> None:
     csv_path = Path(csv_path)
     if not csv_path.exists():
@@ -983,6 +1208,18 @@ def build_dashboard(
     df = pd.read_csv(csv_path)
     last = df.iloc[-1]
     first = df.iloc[0]
+
+    # Multi-scenario comparison dataset (all parametrizations stacked). Falls
+    # back to the single-scenario df when it hasn't been generated (e.g. an
+    # older pipeline, or dashboard.py run standalone without wm.run).
+    if all_scenarios_csv_path is None:
+        all_scenarios_csv_path = csv_path.parent / "outputs_endogenous_all.csv"
+    all_scenarios_csv_path = Path(all_scenarios_csv_path)
+    combined_df = (
+        pd.read_csv(all_scenarios_csv_path)
+        if all_scenarios_csv_path.exists()
+        else df
+    )
 
     # Scenario metadata.
     # These columns are added by run.py. If the CSV was produced by an older
@@ -1041,6 +1278,27 @@ def build_dashboard(
 
         return out
 
+    # Scenario picker: one chip per parametrization present in the combined
+    # dataset, checked by default only for the active/primary scenario.
+    groups = _scenario_groups(combined_df)
+    swatch = {sid: SCENARIO_SWATCH[i % len(SCENARIO_SWATCH)] for i, (sid, _) in enumerate(groups)}
+
+    scenario_checkboxes = "\n".join(
+        f'<label class="scenario-chip{" active" if sid == scenario_id else ""}">'
+        f'<input type="checkbox" data-scenario="{sid}" '
+        f'{"checked" if sid == scenario_id else ""} onchange="applyScenarioFilter()">'
+        f'<span class="swatch" style="background:{swatch[sid]}"></span>{sid}</label>'
+        for sid, _ in groups
+    )
+    sankey_scenario_options = "\n".join(
+        f'<option value="{sid}"{" selected" if sid == scenario_id else ""}>{sid}</option>'
+        for sid, _ in groups
+    )
+
+    fig_physical_json, trace_scenarios_physical = tab_physical(combined_df, scenario_id)
+    fig_money_json, trace_scenarios_money = tab_money(combined_df, scenario_id)
+    fig_environment_json, trace_scenarios_environment = tab_environment(combined_df, scenario_id)
+
     html = HTML_TEMPLATE.format(
         BG=BG, CARD=CARD, BORDER=BORDER, TEXT=TEXT, MUTED=MUTED,
         GREEN=GREEN, TEAL=TEAL, AMBER=AMBER, RED=RED, BLUE=BLUE,
@@ -1056,12 +1314,19 @@ def build_dashboard(
         ghg_last=_fmt(last.get("GHG_net", 0), ""),
         d_env_last=_fmt(last.get("D_env", 0), ""),
         s_lf_last=_fmt(last.get("S_LF", 0), " t"),
-        fig_physical=tab_physical(df),
-        fig_money=tab_money(df),
-        fig_environment=tab_environment(df),
-        sankey_figs=tab_sankey(df),
+        scenario_checkboxes=scenario_checkboxes,
+        sankey_scenario_options=sankey_scenario_options,
+        fig_physical=fig_physical_json,
+        fig_money=fig_money_json,
+        fig_environment=fig_environment_json,
+        sankey_figs=tab_sankey(combined_df),
+        ghg_sankey_figs=tab_ghg_sankey(combined_df),
         years_list=json.dumps(df["year"].tolist()),
         last_row=json.dumps(_safe_last_row(last)),
+        primary_scenario_json=json.dumps(scenario_id),
+        trace_scenarios_physical=json.dumps(trace_scenarios_physical),
+        trace_scenarios_money=json.dumps(trace_scenarios_money),
+        trace_scenarios_environment=json.dumps(trace_scenarios_environment),
     )
 
     # Replace the generic dashboard badge with the active scenario id.

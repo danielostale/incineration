@@ -162,8 +162,12 @@ class Treatment:
         util_CMP = Q_CMP / row.K_CMP if row.K_CMP > 0 else 0.0
 
         # --- residual aggregation -> WTE (eqs. 35-38) ---------------------
-        # Residual = bypassed mixed waste + after-sep residual + node overflows.
-        Q_Gavail = Q_bypass + Q_aftersep + O_R + O_O
+        # Residual = bypassed mixed waste + after-sep residual + node
+        # overflows + MRF/CMP contamination rejects. Rejects are mixed,
+        # combustible residual material, not a distinct waste stream — they
+        # compete for WTE capacity like everything else instead of being
+        # landfilled unconditionally ahead of it.
+        Q_Gavail = Q_bypass + Q_aftersep + O_R + O_O + rej_MRF + rej_CMP
 
         Q_WTE = min(Q_Gavail, row.K_WTE)
         Q_ash = p["lambda_WTE"] * Q_WTE
@@ -171,8 +175,7 @@ class Treatment:
         E_WTE = p["e_E"] * Q_WTE
 
         # --- landfill demand (eqs. 39-40) ---------------------------------
-        Q_LF_dir = Q_Gavail - Q_WTE
-        Q_LF = Q_LF_dir + rej_MRF + rej_CMP + Q_ash
+        Q_LF = Q_Gavail - Q_WTE + Q_ash
 
         return TreatmentOutput(
             Q_sep=Q_sep,

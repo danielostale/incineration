@@ -19,4 +19,4 @@ from .generator_base import Generator
 # Bloque 2 — Households class
 class Households(Generator):
     def __init__(self, p: dict):
-        super().__init__("H", p)
+        super().__init__("H", p, driver_col="N")

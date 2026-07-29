@@ -37,28 +37,36 @@ class Generator:
     Parameters are pulled from the calibration by name using the suffix
     ``_{g}`` (e.g. ``gbar_H``, ``rho_min_SC``). All waste is routed to
     the formal system; there is no leakage channel.
+
+    ``driver_col`` names the exogenous timeseries column that scales this
+    generator's output in eq. 3 — served population ``N`` for households,
+    or an economic-activity index for commercial/institutional generators
+    whose waste tonnage tracks business activity, not headcount.
     """
 
-    def __init__(self, g: str, p: dict):
+    def __init__(self, g: str, p: dict, driver_col: str = "N"):
         self.g = g
         self.p = p
+        self.driver_col = driver_col
         self.gbar = p[f"gbar_{g}"]
         self.rho_min = p[f"rho_min_{g}"]
 
 
 # Bloque 4 — generation method
-    def generation(self, A: float, N: float) -> float:
-        r"""Total generation $Q_g = \rho_g(A)\,N\,\bar g_g$ — **eq. (3)**.
+    def generation(self, A: float, driver: float) -> float:
+        r"""Total generation $Q_g = \rho_g(A)\,X_g\,\bar g_g$ — **eq. (3)**.
 
-        Aggregate generation scales with served population $N$ and per-capita
-        generation $\bar g_g$, scaled down by the education-driven reduction
-        factor $\rho_g(A)\in[\rho_{\min},1]$.
+        Aggregate generation scales with the generator's driver series
+        $X_g$ (population for households; economic activity for
+        commercial/institutional generators) and per-unit generation
+        intensity $\bar g_g$, scaled down by the education-driven
+        reduction factor $\rho_g(A)\in[\rho_{\min},1]$.
         """
-        return forms.rho(A, self.rho_min, self.p["kappa_rho"]) * N * self.gbar
+        return forms.rho(A, self.rho_min, self.p["kappa_rho"]) * driver * self.gbar
 
 
 # Bloque 5 — allocate method
-    def allocate(self, A: float, Psi: float, N: float,
+    def allocate(self, A: float, Psi: float, driver: float,
                  pG: float, pR: float, pO: float) -> GeneratorOutput:
         r"""Route all generation into formal streams — no informal leakage.
 
@@ -69,7 +77,7 @@ class Generator:
         3. **Stream quantities (eq. 6).**
            $Q_g^{k}=s_k\,Q_g^{formal},\;\; k\in\{R,O,G\}.$
         """
-        Qg = self.generation(A, N)
+        Qg = self.generation(A, driver)
         formal   = Qg
         informal = 0.0
         sR, sO, sG = forms.sorting_shares(A, Psi, pG, pR, pO, self.p)
