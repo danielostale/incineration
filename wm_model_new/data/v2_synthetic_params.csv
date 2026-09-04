@@ -1,0 +1,55 @@
+name,value,status,empirical_available,replacement_source,note
+scale_share_H,0.65,SYNTHETIC,yes,FDEP generator-type reports + Census/ACS,Single-family share of residential population; paired with MF so aggregate residential generation is preserved initially.
+scale_share_MF,0.35,SYNTHETIC,yes,FDEP generator-type reports + Census/ACS,Multifamily share of residential population; synthetic until denominator is reconciled.
+gbar_MF,0.85,SYNTHETIC,yes,FDEP MSW by generator type,Set equal to household intensity initially so H+MF preserves V1 residential aggregate when shares sum to one.
+rho_min_MF,1.0,SYNTHETIC,no,behavioral calibration,No prevention response in structural baseline.
+leakage_MF,-2.3,SYNTHETIC,no,behavioral calibration,Initial logit leakage intercept copied from other generator types.
+dV_R_H,0.0,SYNTHETIC,yes,FDEP participation/composition by generator type,Generator-specific recycling logit offset.
+dV_O_H,0.0,SYNTHETIC,yes,FDEP participation/composition by generator type,Generator-specific organics logit offset.
+dV_R_MF,0.0,SYNTHETIC,yes,FDEP participation/composition by generator type,Generator-specific recycling logit offset.
+dV_O_MF,0.0,SYNTHETIC,yes,FDEP participation/composition by generator type,Generator-specific organics logit offset.
+dV_R_SC,0.0,SYNTHETIC,yes,FDEP commercial participation/composition,Generator-specific recycling logit offset.
+dV_O_SC,0.0,SYNTHETIC,yes,FDEP commercial participation/composition,Generator-specific organics logit offset.
+dV_R_LG,0.0,SYNTHETIC,partial,FDEP commercial data + private contracts/RMD,Large-generator recycling logit offset.
+dV_O_LG,0.0,SYNTHETIC,partial,FDEP commercial data + private contracts/RMD,Large-generator organics logit offset.
+private_LG_collection_share,1.0,SYNTHETIC,partial,Miami-Dade/FDEP interviews + private contract data,Share of LG formal waste handled by private haulers.
+private_LG_recycling_share,1.0,SYNTHETIC,partial,FDEP Recovered Materials Dealer program + contracts,Share of privately hauled LG recyclables processed outside the public MRF.
+lambda_private_operator,0.08,SYNTHETIC,partial,RMD/operator reports,Private recovered-material reject/process-loss fraction.
+c_private_coll,30.0,SYNTHETIC,partial,private contracts/operator data,$/ton private collection cost.
+c_private_processing,20.0,SYNTHETIC,partial,operator data/literature,$/ton private recovered-material processing cost.
+g_private_processing,0.01,SYNTHETIC,partial,operator data/EPA factors,tCO2e/ton private material processing.
+e_use_private_processing,0.01,SYNTHETIC,partial,operator data/EPA factors,MWh/ton private material processing.
+p_private_LG,70.0,SYNTHETIC,partial,private contracts,$/ton paid by LG to private operator.
+private_rebate_share,0.0,SYNTHETIC,partial,private contracts,Share of private material-sales revenue returned to LG.
+gbar_CND,0.45,SYNTHETIC,yes,FDEP annual C&D tables,Construction and demolition generation intensity scaled by Y*N_ref.
+cnd_process_share,0.70,SYNTHETIC,yes,FDEP C&D recycled/disposed data,Share of C&D sent to a C&D MRF before disposal.
+K_CND_MRF,500000.0,SYNTHETIC,yes,Solid Waste Universe/Oculus + Zero Waste Plan,Annual C&D MRF capacity placeholder in tons/year.
+lambda_CND_MRF,0.15,SYNTHETIC,partial,C&D facility reports/literature,C&D MRF reject fraction.
+c_CND_MRF,25.0,SYNTHETIC,partial,facility/operator data,$/ton C&D processing cost.
+c_CND_disposal,20.0,SYNTHETIC,yes,FDEP disposal fee reports,$/ton C&D disposal cost.
+g_CND_MRF,0.015,SYNTHETIC,partial,EPA/literature,tCO2e/ton C&D processing.
+g_CND_disposal,0.05,SYNTHETIC,partial,EPA/literature,tCO2e/ton C&D disposal.
+b_CND,0.20,SYNTHETIC,partial,EPA WARM/literature,tCO2e avoided per ton C&D material recovered.
+p_CND_mat,20.0,SYNTHETIC,partial,commodity/operator data,$/ton recovered C&D material.
+p_CND_haul,60.0,SYNTHETIC,partial,private contracts,$/ton C&D collection/handling payment.
+yard_share_organics,0.625,EXPERT_INFORMED,yes,FDEP annual material tables/SOPF,Florida expert benchmark 60-65%; must be replaced with Miami-Dade-specific value.
+K_MULCH,600000.0,SYNTHETIC,yes,Solid Waste Universe/SOPF/Oculus,Annual yard-waste mulching capacity placeholder.
+lambda_MULCH,0.05,SYNTHETIC,partial,SOPF/facility reports,Yard-waste processing reject fraction.
+ell_MULCH,0.20,SYNTHETIC,partial,SOPF/facility reports/literature,Biological/moisture mass loss in mulching.
+c_MULCH,20.0,SYNTHETIC,partial,SOPF/facility reports,$/ton mulching cost.
+g_MULCH,0.02,SYNTHETIC,partial,EPA WARM/literature,tCO2e/ton mulching.
+e_use_MULCH,0.005,SYNTHETIC,partial,facility data/literature,MWh/ton mulching.
+b_MULCH,0.05,SYNTHETIC,partial,EPA WARM/literature,tCO2e avoided per ton mulch product.
+p_MULCH,0.0,SYNTHETIC,partial,local market/operator data,$/ton mulch product; zero until verified.
+direct_LF_share_residual,0.15,SYNTHETIC,yes,FDEP final disposition/facility data,Share of residual routed directly to landfill before WTE.
+transfer_share_public,0.80,SYNTHETIC,yes,Miami-Dade Zero Waste Plan + Solid Waste Universe,Share of public collected tonnage passing through transfer stations.
+transfer_share_private,0.30,SYNTHETIC,partial,private routing/facility data,Share of private collected tonnage using transfer stations.
+c_transfer,8.0,SYNTHETIC,partial,county contracts/fees,$/ton transfer and line-haul handling cost.
+g_transfer,0.005,SYNTHETIC,partial,haul-distance/fuel data,tCO2e/ton transferred.
+e_use_transfer,0.002,SYNTHETIC,partial,facility data,MWh/ton transfer operations.
+S_CND0,0.0,SYNTHETIC,no,model initialization,Initial cumulative C&D disposal stock.
+delta_CND,0.0,SYNTHETIC,no,model assumption,C&D disposal stock depreciation; zero baseline.
+fl_credit_MRF,1.0,SYNTHETIC,yes,FDEP recycling credit methodology,Regulatory-credit weight on recovered conventional recyclables.
+fl_credit_organics,1.0,SYNTHETIC,yes,FDEP recycling credit methodology,Regulatory-credit weight on recovered organics/mulch.
+fl_credit_CND,1.0,SYNTHETIC,yes,FDEP recycling credit methodology,Regulatory-credit weight on recovered C&D.
+fl_credit_WTE,0.0,SYNTHETIC,yes,FDEP renewable-energy recycling credit methodology,Kept zero until Florida credit formula is implemented explicitly.
