@@ -1,98 +1,94 @@
 r"""
-agents/treatment.py — Integrated treatment operator (T), §5.6
-=============================================================
+agents/treatment.py — V2 physical treatment network
+===================================================
 
-The treatment operator receives the three delivered streams and operates five
-physical nodes — **separation/pre-treatment**, **MRF**, **organics (CMP)**,
-**WTE**, and **landfill (LF)** — defined by the *physical quality* of the
-stream, not the identity of the generator. Mass is conserved at every node:
-nothing disappears and nothing is double-counted (the invariant checked in
-``closure.py`` against eq. 55).
+FDEP-informed V2 keeps one mass-accounting module but distinguishes the
+physical pathways that matter for calibration and policy analysis:
 
-Node map
---------
-- **MRF** (revised eqs. 31-32): Miami-Dade recycling is single-stream — the
-  entire source-separated recyclable stream $Q_R$ is mechanically
-  re-separated at the MRF (no clean pre-sorted delivery). Recovers
-  marketable material $Q^{mat}$; reject/contamination fraction
-  $\lambda_{MRF}(A_t)$ (endogenous in awareness, see ``forms.lambda_mrf``)
-  goes to landfill. The previous "general → mechanical recovery" pathway
-  (former eqs. 22-30: $\eta_R,\eta_O,c_{sep},\text{sep\_share}$) has been
-  **removed** — it modelled a dirty-MRF process that does not exist in
-  Miami-Dade's system, where mixed general waste is never re-opened for
-  recyclable recovery.
-- **CMP** (eqs. 33-34): marketable compost $Q^{cmp}$; reject $\lambda_{CMP}$ to
-  landfill; biological loss $\ell_{CMP}$ (moisture + CO$_2$) leaves as mass loss.
-- **WTE** (eqs. 35-38): combusts residual up to capacity $K_{WTE}$; ash fraction
-  $\lambda_{WTE}$; electricity $E^{WTE}=e_E\,Q_{WTE}$.
-- **LF** (eqs. 39-40): receives the residual not combusted plus all rejects and
-  ash; accumulates the cumulative landfilled stock $S^{LF}$.
+- public single-stream MRF;
+- integrated private recovered-material processing for LG recyclables;
+- food-organics composting;
+- yard-waste mulching;
+- dedicated C&D processing/disposal;
+- residual routing with an explicit direct-landfill share and WTE-eligible
+  residual;
+- WTE ash to landfill.
 
-Capacity diagnostics
---------------------
-The module also reports whether source-separated material is actually processed
-or blocked by downstream capacity:
+Crucially, MRF/CMP/mulching rejects now rejoin the WTE-eligible residual stream
+before final landfill disposal, rather than being sent directly to landfill.
+C&D rejects remain on the dedicated C&D disposal pathway.
 
-- R_avail / O_avail: material available for MRF / CMP
-- overflow_R / overflow_O: material available but not processed because capacity binds
-- cap_gap_MRF / cap_gap_CMP: unused capacity
-- util_MRF / util_CMP: throughput divided by installed capacity
-
-These diagnostics are not separate mechanisms. They are accounting variables
-needed to interpret why source-separation behaviour may or may not translate
-into recovered material.
+All newly introduced numerical parameters are synthetic placeholders in
+``data/v2_synthetic_params.csv`` pending the empirical FDEP/Oculus pipeline.
 """
 
 # Bloque 1 — imports
 from __future__ import annotations
-
 from dataclasses import dataclass, asdict
 
 
 # Bloque 2 — TreatmentOutput dataclass
 @dataclass
 class TreatmentOutput:
-    """Per-period physical, energy, and capacity-diagnostic outputs."""
-
-    # Separation / pre-treatment — retained at 0.0 for structural
-    # compatibility with environment.py's g_sep/a_sep/e_use_sep terms
-    # and excel_report.py; the mechanical-separation-from-general pathway
-    # that used to populate these has been removed (see module docstring).
+    # Legacy compatibility fields.
     Q_sep: float
     Q_bypass: float
     Q_aftersep: float
 
-    # Treatment-node throughput.
+    # Throughput by node.
     Q_MRF: float
+    Q_private_proc: float
     Q_CMP: float
+    Q_MULCH: float
+    Q_CND_MRF: float
     Q_WTE: float
     Q_LF: float
+    Q_CND_disposal: float
 
-    # Recovered outputs, losses, combustion, ash, and energy.
+    # Recovered products and losses.
     Q_mat: float
+    Q_private_mat: float
     Q_cmp: float
+    Q_mulch: float
+    Q_CND_mat: float
     Q_loss: float
+    Q_loss_CMP: float
+    Q_loss_MULCH: float
     Q_comb: float
     Q_ash: float
     E_WTE: float
 
-    # Treatment residuals.
+    # Rejects / process losses returned to residual or disposal.
     rej_MRF: float
+    rej_private: float
     rej_CMP: float
-    lambda_MRF: float          # period-specific, endogenous in A_t
+    rej_MULCH: float
+    rej_CND: float
+    lambda_MRF: float
 
-    # Material available before capacity constraints.
+    # Available material and residual routing.
     R_avail: float
     O_avail: float
+    O_food_avail: float
+    O_yard_avail: float
     Q_Gavail: float
+    Q_LF_direct: float
+    Q_WTE_eligible: float
 
     # Capacity diagnostics.
     overflow_R: float
     overflow_O: float
+    overflow_food: float
+    overflow_yard: float
+    overflow_CND: float
     cap_gap_MRF: float
     cap_gap_CMP: float
+    cap_gap_MULCH: float
+    cap_gap_CND: float
     util_MRF: float
     util_CMP: float
+    util_MULCH: float
+    util_CND: float
 
     def as_dict(self):
         return asdict(self)
@@ -106,188 +102,190 @@ class Treatment:
 
 # Bloque 4 — run method
     def run(self, QR: float, QO: float, QG: float, row,
-            lambda_MRF: float) -> TreatmentOutput:
-        r"""Route the three delivered streams through all treatment nodes.
-
-        Parameters
-        ----------
-        QR:
-            Source-separated recyclable stream delivered by haulers. Under
-            single-stream recycling, this is *not* clean material — the
-            entire stream is mechanically re-separated at the MRF below.
-
-        QO:
-            Source-separated organic stream delivered by haulers.
-
-        QG:
-            General / mixed residual stream delivered by haulers. There is
-            no mechanical recovery of R,O from this stream (removed — see
-            module docstring); it flows directly toward WTE/landfill.
-
-        row:
-            Period-specific exogenous inputs, including installed capacities
-            K_MRF, K_CMP, and K_WTE.
-
-        lambda_MRF:
-            Period-specific MRF reject/contamination fraction, computed
-            upstream from awareness $A_t$ via ``forms.lambda_mrf`` — this
-            is the module's only entry point for that value, kept as an
-            explicit argument so Treatment stays free of the ``forms``
-            behavioural dependency.
-
-        Returns
-        -------
-        TreatmentOutput
-            Physical outputs, environmental-relevant quantities, and capacity
-            diagnostics for the period.
-        """
+            lambda_MRF: float, *, QR_private: float = 0.0,
+            Q_CND: float = 0.0) -> TreatmentOutput:
+        """Route public/private MSW and dedicated C&D through the V2 network."""
         p = self.p
 
-        # --- MRF (revised eqs. 31-32) --------------------------------------
-        # Single-stream: the entire recyclable stream QR requires mechanical
-        # separation at the MRF (no direct-to-market clean delivery).
-        # Processed up to capacity; overflow O_R is rerouted to residual.
+        # --- Public MRF ----------------------------------------------------
         R_avail = QR
-        O_avail = QO
-
         Q_MRF = min(R_avail, row.K_MRF)
-        O_R = R_avail - Q_MRF
-
-        Q_mat = (1 - lambda_MRF) * Q_MRF
-        rej_MRF = lambda_MRF * Q_MRF
-
-        # MRF capacity diagnostics.
         overflow_R = max(0.0, R_avail - row.K_MRF)
+        Q_mat = (1.0 - lambda_MRF) * Q_MRF
+        rej_MRF = lambda_MRF * Q_MRF
         cap_gap_MRF = max(0.0, row.K_MRF - R_avail)
         util_MRF = Q_MRF / row.K_MRF if row.K_MRF > 0 else 0.0
 
-        # --- organics / CMP (eqs. 33-34) ----------------------------------
-        # Processed up to capacity; overflow O_O is rerouted to residual.
-        Q_CMP = min(O_avail, row.K_CMP)
-        O_O = O_avail - Q_CMP
+        # --- Private recovered-material operator --------------------------
+        # LG source-separated recyclables may bypass the public MRF. The
+        # operator is modelled as vertically integrated hauler/processor/
+        # offtaker; process rejects rejoin residual treatment.
+        Q_private_proc = QR_private
+        lambda_private = p["lambda_private_operator"]
+        Q_private_mat = (1.0 - lambda_private) * Q_private_proc
+        rej_private = lambda_private * Q_private_proc
 
-        Q_cmp = (1 - p["lambda_CMP"] - p["ell_CMP"]) * Q_CMP
+        # --- Organics split: food composting vs yard-waste mulching -------
+        O_avail = QO
+        yard_share = min(1.0, max(0.0, p["yard_share_organics"]))
+        O_yard_avail = yard_share * O_avail
+        O_food_avail = O_avail - O_yard_avail
+
+        # Food -> composting.
+        Q_CMP = min(O_food_avail, row.K_CMP)
+        overflow_food = max(0.0, O_food_avail - row.K_CMP)
+        Q_cmp = (1.0 - p["lambda_CMP"] - p["ell_CMP"]) * Q_CMP
         rej_CMP = p["lambda_CMP"] * Q_CMP
-        Q_loss = p["ell_CMP"] * Q_CMP
-
-        # CMP capacity diagnostics.
-        overflow_O = max(0.0, O_avail - row.K_CMP)
-        cap_gap_CMP = max(0.0, row.K_CMP - O_avail)
+        Q_loss_CMP = p["ell_CMP"] * Q_CMP
+        cap_gap_CMP = max(0.0, row.K_CMP - O_food_avail)
         util_CMP = Q_CMP / row.K_CMP if row.K_CMP > 0 else 0.0
 
-        # --- residual aggregation -> WTE (eqs. 35-38) ---------------------
-        # Residual = mixed general waste (unchanged, no mechanical recovery
-        # applied to it) + MRF/CMP capacity overflow.
-        Q_Gavail = QG + O_R + O_O
+        # Yard -> mulching / yard processing.
+        K_MULCH = p["K_MULCH"]
+        Q_MULCH = min(O_yard_avail, K_MULCH)
+        overflow_yard = max(0.0, O_yard_avail - K_MULCH)
+        Q_mulch = (1.0 - p["lambda_MULCH"] - p["ell_MULCH"]) * Q_MULCH
+        rej_MULCH = p["lambda_MULCH"] * Q_MULCH
+        Q_loss_MULCH = p["ell_MULCH"] * Q_MULCH
+        cap_gap_MULCH = max(0.0, K_MULCH - O_yard_avail)
+        util_MULCH = Q_MULCH / K_MULCH if K_MULCH > 0 else 0.0
 
-        Q_WTE = min(Q_Gavail, row.K_WTE)
+        overflow_O = overflow_food + overflow_yard
+        Q_loss = Q_loss_CMP + Q_loss_MULCH
+
+        # --- Dedicated C&D path -------------------------------------------
+        cnd_process_share = min(1.0, max(0.0, p["cnd_process_share"]))
+        Q_CND_to_MRF = cnd_process_share * Q_CND
+        Q_CND_direct = Q_CND - Q_CND_to_MRF
+        K_CND = p["K_CND_MRF"]
+        Q_CND_MRF = min(Q_CND_to_MRF, K_CND)
+        overflow_CND = max(0.0, Q_CND_to_MRF - K_CND)
+        rej_CND = p["lambda_CND_MRF"] * Q_CND_MRF
+        Q_CND_mat = (1.0 - p["lambda_CND_MRF"]) * Q_CND_MRF
+        Q_CND_disposal = Q_CND_direct + overflow_CND + rej_CND
+        cap_gap_CND = max(0.0, K_CND - Q_CND_to_MRF)
+        util_CND = Q_CND_MRF / K_CND if K_CND > 0 else 0.0
+
+        # --- Residual aggregation -> direct LF + WTE ----------------------
+        # MRF/CMP/mulching/private-processor rejects now enter residual before
+        # WTE, per the revised routing rule. C&D stays separate.
+        Q_Gavail = (
+            QG
+            + overflow_R + rej_MRF + rej_private
+            + overflow_food + rej_CMP
+            + overflow_yard + rej_MULCH
+        )
+
+        direct_share = min(1.0, max(0.0, p["direct_LF_share_residual"]))
+        Q_LF_direct = direct_share * Q_Gavail
+        Q_WTE_eligible = Q_Gavail - Q_LF_direct
+
+        Q_WTE = min(Q_WTE_eligible, row.K_WTE)
         Q_ash = p["lambda_WTE"] * Q_WTE
-        Q_comb = (1 - p["lambda_WTE"]) * Q_WTE
+        Q_comb = (1.0 - p["lambda_WTE"]) * Q_WTE
         E_WTE = p["e_E"] * Q_WTE
 
-        # --- landfill demand (eqs. 39-40) ---------------------------------
-        Q_LF_dir = Q_Gavail - Q_WTE
-        Q_LF = Q_LF_dir + rej_MRF + rej_CMP + Q_ash
+        Q_LF_unprocessed = Q_WTE_eligible - Q_WTE
+        Q_LF = Q_LF_direct + Q_LF_unprocessed + Q_ash
 
         return TreatmentOutput(
-            # Mechanical-separation-from-general pathway removed; retained
-            # at 0.0 for structural compatibility (see dataclass comment).
             Q_sep=0.0,
             Q_bypass=0.0,
             Q_aftersep=0.0,
-
             Q_MRF=Q_MRF,
+            Q_private_proc=Q_private_proc,
             Q_CMP=Q_CMP,
+            Q_MULCH=Q_MULCH,
+            Q_CND_MRF=Q_CND_MRF,
             Q_WTE=Q_WTE,
             Q_LF=Q_LF,
-
+            Q_CND_disposal=Q_CND_disposal,
             Q_mat=Q_mat,
+            Q_private_mat=Q_private_mat,
             Q_cmp=Q_cmp,
+            Q_mulch=Q_mulch,
+            Q_CND_mat=Q_CND_mat,
             Q_loss=Q_loss,
+            Q_loss_CMP=Q_loss_CMP,
+            Q_loss_MULCH=Q_loss_MULCH,
             Q_comb=Q_comb,
             Q_ash=Q_ash,
             E_WTE=E_WTE,
-
             rej_MRF=rej_MRF,
+            rej_private=rej_private,
             rej_CMP=rej_CMP,
+            rej_MULCH=rej_MULCH,
+            rej_CND=rej_CND,
             lambda_MRF=lambda_MRF,
-
             R_avail=R_avail,
             O_avail=O_avail,
+            O_food_avail=O_food_avail,
+            O_yard_avail=O_yard_avail,
             Q_Gavail=Q_Gavail,
-
+            Q_LF_direct=Q_LF_direct,
+            Q_WTE_eligible=Q_WTE_eligible,
             overflow_R=overflow_R,
             overflow_O=overflow_O,
+            overflow_food=overflow_food,
+            overflow_yard=overflow_yard,
+            overflow_CND=overflow_CND,
             cap_gap_MRF=cap_gap_MRF,
             cap_gap_CMP=cap_gap_CMP,
+            cap_gap_MULCH=cap_gap_MULCH,
+            cap_gap_CND=cap_gap_CND,
             util_MRF=util_MRF,
             util_CMP=util_CMP,
+            util_MULCH=util_MULCH,
+            util_CND=util_CND,
         )
 
 
-# Bloque 5 — operating cost
+# Bloque 5 — integrated/public treatment operating cost
     def operating_cost(self, o: TreatmentOutput) -> float:
-        r"""Operator cost $C^{op}_T$ — separation + per-node O&M.
-
-        $$ C^{op}_T = c_{sep}Q^{sep}
-                    + c_{MRF}Q_{MRF}
-                    + c_{CMP}Q_{CMP}
-                    + c_{WTE}Q_{WTE}
-                    + c_{LF}Q_{LF}. $$
-        """
         p = self.p
-
         return (
             p["c_sep"] * o.Q_sep
             + p["c_MRF"] * o.Q_MRF
             + p["c_CMP"] * o.Q_CMP
+            + p["c_MULCH"] * o.Q_MULCH
             + p["c_WTE"] * o.Q_WTE
             + p["c_LF"] * o.Q_LF
         )
 
 
-# Bloque 6 — tipping revenue
-    def tipping_revenue(self, o: TreatmentOutput, row) -> float:
-        r"""Gate tipping revenue, equal to haulers' tipping payment.
+# Bloque 6 — private/C&D real operating costs
+    def cnd_operating_cost(self, o: TreatmentOutput) -> float:
+        p = self.p
+        return p["c_CND_MRF"] * o.Q_CND_MRF + p["c_CND_disposal"] * o.Q_CND_disposal
 
-        $$ R^{tip}_T =
-            t_{MRF}Q_{MRF}
-          + t_{CMP}Q_{CMP}
-          + t_{WTE}Q_{WTE}
-          + t_{LF}Q_{LF}. $$
-        """
+
+# Bloque 7 — tipping revenue
+    def tipping_revenue(self, o: TreatmentOutput, row) -> float:
+        # Until a dedicated local mulching gate fee is observed, use the CMP
+        # gate fee as the synthetic proxy for yard-organics handling.
+        t_mulch = self.p.get("t_MULCH", row.t_CMP)
         return (
             row.t_MRF * o.Q_MRF
             + row.t_CMP * o.Q_CMP
+            + t_mulch * o.Q_MULCH
             + row.t_WTE * o.Q_WTE
             + row.t_LF * o.Q_LF
         )
 
 
-# Bloque 7 — product and energy revenue
+# Bloque 8 — product and energy revenue owned by integrated/public treatment
     def product_revenue(self, o: TreatmentOutput, row):
-        r"""Boundary-market revenues: material, compost, electricity.
-
-        $$ R^{mat}=p^{mat}Q^{mat},\quad
-           R^{cmp}=p^{cmp}Q^{cmp},\quad
-           R^{E}=p^{E}E^{WTE}. $$
-
-        Returns
-        -------
-        tuple
-            ``(R_mat, R_cmp, R_E)``
-        """
         return (
             row.p_mat * o.Q_mat,
             row.p_cmp * o.Q_cmp,
+            self.p["p_MULCH"] * o.Q_mulch,
             row.p_E * o.E_WTE,
         )
 
 
-# Bloque 8 — landfill stock law of motion
+# Bloque 9 — stocks
     def landfill_stock_next(self, S_LF: float, Q_LF: float) -> float:
-        r"""Cumulative landfilled stock.
+        return (1.0 - self.p["delta_LF"]) * S_LF + Q_LF
 
-        $$ S^{LF}_{t+1} = (1-\delta_{LF})S^{LF}_t + Q^{LF}_t. $$
-        """
-        return (1 - self.p["delta_LF"]) * S_LF + Q_LF
+    def cnd_stock_next(self, S_CND: float, Q_CND_disposal: float) -> float:
+        return (1.0 - self.p["delta_CND"]) * S_CND + Q_CND_disposal
