@@ -1,26 +1,31 @@
 r"""
-agents/haulers.py — Collection agents (HAUL), §5.5.1
-====================================================
+agents/haulers.py — Public and private collection agents
+========================================================
 
-Haulers collect the three formal streams from generators and deliver them to
-the transfer station / treatment operator. They receive the municipal contract
-payment $p^{HAUL}Q^{HAUL}$ (residential streams) and pay tipping fees at the
-treatment gate; the gate fee is a pass-through that exactly equals the
-operator's tipping revenue (eq. 43). They bear a real haulage cost
-$c_{coll}$ per ton.
-
-**Physical aggregation (eqs. 13-14).** The formal collected tonnage is the sum
-over generators of each stream:
-$$ Q^{HAUL}_k = \sum_{g\in\mathcal G} Q_g^{k}, \quad k\in\{R,O,G\}, \qquad
-   Q^{HAUL} = \sum_k Q^{HAUL}_k. $$
+V2 distinguishes the municipal/public collection system from private haulage
+used by large generators and C&D. Physical ownership is kept separate from the
+waste-treatment physics: the simulator can allocate tipping payments and
+private recovered-material revenue without pretending all formal tons are
+handled by one hauler.
 """
+
+# Bloque 1 — imports
 from __future__ import annotations
 
 
+# Bloque 2 — Haulers class
 class Haulers:
     def __init__(self, p: dict):
         self.p = p
 
-    def collection_cost(self, Q_HAUL: float) -> float:
-        r"""Real haulage cost $C^{coll}_t = c_{coll}\,Q^{HAUL}_t$ (§5.5.1)."""
-        return self.p["c_coll"] * Q_HAUL
+    def collection_cost(self, Q_public: float) -> float:
+        """Real public/municipal haulage cost."""
+        return self.p["c_coll"] * Q_public
+
+    def private_collection_cost(self, Q_private: float) -> float:
+        """Real private haulage cost for LG and C&D streams."""
+        return self.p["c_private_coll"] * Q_private
+
+    def private_processing_cost(self, Q_private_recycling: float) -> float:
+        """Real processing cost at the integrated private recovered-material node."""
+        return self.p["c_private_processing"] * Q_private_recycling
